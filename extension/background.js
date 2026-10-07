@@ -66,7 +66,7 @@ async function ping() {
 
 async function handoff({ url, originalUrl, referrer, filename, size, mime, force }) {
   const rec = recent.get(url) || (originalUrl && recent.get(originalUrl));
-  if (rec && rec.method && rec.method !== "GET") return false;
+  if (rec && rec.method && rec.method !== "GET") return "refused";
   let cookie = null;
   let ua = navigator.userAgent;
   const headers = [];
@@ -92,9 +92,9 @@ async function handoff({ url, originalUrl, referrer, filename, size, mime, force
       allow_refresh: true,
       force: !!force,
     });
-    return !!j.accepted;
+    return j.accepted ? "ok" : "refused";
   } catch {
-    return false;
+    return "offline";
   }
 }
 
@@ -124,7 +124,7 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
       const c = await cfg();
       const size = item.totalBytes > 0 ? item.totalBytes : item.fileSize > 0 ? item.fileSize : 0;
       if (c.enabled && !(size && size < c.minSize)) {
-        taken = await handoff({ url, originalUrl: item.url, referrer: item.referrer, filename: item.filename, size, mime: item.mime });
+        taken = (await handoff({ url, originalUrl: item.url, referrer: item.referrer, filename: item.filename, size, mime: item.mime })) === "ok";
       }
     } catch {}
     if (taken) {
@@ -148,10 +148,17 @@ chrome.alarms.onAlarm.addListener((a) => a.name === "ping" && ping());
 ping();
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
-  const url = info.linkUrl || info.srcUrl;
-  if (!url || !/^https?:/i.test(url)) return;
-  const ok = await handoff({ url, referrer: info.pageUrl, force: true });
-  if (!ok) {
+  // An image inside a link reports both; the link usually points at a page, not the file.
+  const url = (info.mediaType && info.srcUrl) || info.linkUrl || info.srcUrl;
+  if (!url) return;
+  if (/^data:/i.test(url)) {
+    chrome.downloads.download({ url }).catch(() => {});
+    return;
+  }
+  const r = await handoff({ url, referrer: info.pageUrl, force: true });
+  if (r === "offline" && /^https?:/i.test(url)) {
+    chrome.downloads.download({ url }).catch(() => {});
+  } else if (r !== "ok") {
     chrome.action.setBadgeBackgroundColor({ color: "#e5484d" });
     chrome.action.setBadgeText({ text: "!" });
     setTimeout(() => chrome.action.setBadgeText({ text: "" }), 4000);

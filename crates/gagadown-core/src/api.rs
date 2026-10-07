@@ -101,6 +101,15 @@ fn baidu_pcs(url: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn unsupported_scheme(url: &str) -> Option<&'static str> {
+    let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase()).unwrap_or_default();
+    match scheme.as_str() {
+        "http" | "https" => None,
+        "blob" => Some("这是网页播放器生成的视频流，没有可以直接下载的文件地址"),
+        _ => Some("不支持这种链接，只能下载 http/https 地址"),
+    }
+}
+
 type Taken = (AddResp, Option<Uuid>, Option<String>);
 
 /// Expected hand-back to the browser (small file, web page, …): no error shown.
@@ -126,6 +135,9 @@ async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
         referrer: req.referrer.clone(),
         user_agent: req.user_agent.clone(),
     };
+    if let Some(shown) = unsupported_scheme(&spec.url) {
+        return fail("unsupported_scheme", shown, None);
+    }
     // The browser holds its download until we answer, so never keep it waiting long.
     let baidu = baidu_pcs(&spec.url);
     let attempt = async {
@@ -157,6 +169,9 @@ async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
     };
     let min = e.settings().takeover_min_size;
     if crate::download::is_web_page(&probe) {
+        if body.force {
+            return fail("web_page", "这个地址打开的是网页，不是文件", probe.size);
+        }
         return reject("web_page", probe.size);
     }
     if !body.force {
