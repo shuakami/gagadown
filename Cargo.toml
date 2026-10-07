@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/gagadown-core", "crates/gagadown-cli", "crates/gagadown-app"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Local patches (see patches/README.md): run the root UI while minimized/hidden so browser popups
+# can open, and rasterize glyphs with the native Windows rasterizer for crisp text.
+[patch.crates-io]
+eframe = { path = "patches/eframe" }
+epaint = { path = "patches/epaint" }
+egui-wgpu = { path = "patches/egui-wgpu" }

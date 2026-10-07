@@ -1,0 +1,185 @@
+name: Release
+
+# main 每次推送自动发版：版本号取上一个 tag 的 patch + 1（没有 tag 时用 Cargo.toml 里的版本）
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Next version
+        id: v
+        run: |
+          LAST=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LAST" ]; then
+            V=$(grep -m1 '^version' crates/gagadown-app/Cargo.toml | cut -d'"' -f2)
+          else
+            IFS=. read -r MA MI PA <<< "${LAST#v}"
+            V="$MA.$MI.$((PA + 1))"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "v$V"
+
+  windows:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      V: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set version
+        run: bash tools/set-version.sh "$V"
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 nsis zip
+          rustup target add x86_64-pc-windows-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+
+      - name: Build
+        run: bash tools/package.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  linux:
+    needs: version
+    runs-on: ubuntu-22.04
+    env:
+      V: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set version
+        run: bash tools/set-version.sh "$V"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux
+
+      - name: Build
+        run: |
+          cargo build --release -p gagadown-app -p gagadown-cli
+          D="GagaDown-$V-linux-x86_64"
+          mkdir -p "dist/$D"
+          cp target/release/GagaDown target/release/gagadown-cli "dist/$D/"
+          cp assets/icon-source.png "dist/$D/gagadown.png"
+          cp LICENSE "dist/$D/"
+          tar -C dist -czf "dist/$D.tar.gz" "$D"
+          rm -rf "dist/$D"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+
+  release:
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    env:
+      V: ${{ needs.version.outputs.version }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Stable file names
+        run: |
+          cd dist
+          cp "GagaDown-Setup-$V.exe" GagaDown-windows-setup.exe
+          cp "GagaDown-$V-linux-x86_64.tar.gz" GagaDown-linux-x86_64.tar.gz
+          ls -la
+
+      - name: Write release notes
+        run: |
+          TAG="v$V"
+          RAW="https://raw.githubusercontent.com/$REPO/main/docs"
+          DL="https://github.com/$REPO/releases/download/$TAG"
+          PREV=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          row() {
+            SIZE=$(stat -c%s "dist/$1" | awk '{printf "%.1f", $1/1048576}')
+            SHA=$(sha256sum "dist/$1" | cut -d' ' -f1)
+            echo "<tr><td>$1</td><td>$2</td><td>${SIZE} MB</td><td><code>${SHA}</code></td></tr>"
+          }
+          {
+            echo "<a href=\"$DL/GagaDown-Setup-$V.exe\"><img src=\"$RAW/download-windows.svg\" alt=\"Download for Windows\" /></a>"
+            echo "<a href=\"$DL/GagaDown-$V-linux-x86_64.tar.gz\"><img src=\"$RAW/download-linux.svg\" alt=\"Download for Linux\" /></a>"
+            echo
+            echo "<details>"
+            echo "<summary>文件</summary>"
+            echo
+            echo "<table>"
+            echo "<tr><td>文件</td><td>说明</td><td>大小</td><td>SHA-256</td></tr>"
+            row "GagaDown-Setup-$V.exe" "Windows 安装版"
+            row "GagaDown-$V-portable.exe" "Windows 便携版"
+            row "gagadown-cli-$V.exe" "Windows 命令行"
+            row "GagaDown-$V-linux-x86_64.tar.gz" "Linux x86_64（桌面程序 + 命令行）"
+            echo "</table>"
+            echo "</details>"
+            echo
+            echo "### 变更"
+            echo
+            if [ -n "$PREV" ]; then
+              git log --format='- %s (%h)' "$PREV..HEAD"
+              echo
+              echo "**Full Changelog**: [$PREV...$TAG](https://github.com/$REPO/compare/$PREV...$TAG)"
+            else
+              git log --format='- %s (%h)' HEAD
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.V }}
+          target_commitish: ${{ github.sha }}
+          name: v${{ env.V }}
+          body_path: release-notes.md
+          files: |
+            dist/GagaDown-Setup-${{ env.V }}.exe
+            dist/GagaDown-${{ env.V }}-portable.exe
+            dist/gagadown-cli-${{ env.V }}.exe
+            dist/GagaDown-${{ env.V }}-linux-x86_64.tar.gz
+            dist/GagaDown-${{ env.V }}-src.zip
+            dist/GagaDown-windows-setup.exe
+            dist/GagaDown-linux-x86_64.tar.gz

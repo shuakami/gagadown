@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; --fg: #1f1f1f; --weak: #8a8a8a; --bg: #fff; --head: #f3f3f3; --line: #e6e6e6; --hover: #f0f0f0; --off: #d4d4d8; --on: #2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e6e6e6; --weak: #8f8f8f; --bg: #202020; --head: #2a2a2a; --line: #333; --hover: #2c2c2c; --off: #48484a; } }
+  body { margin: 0; width: 240px; font: 13px "Microsoft YaHei", system-ui, sans-serif; color: var(--fg); background: var(--bg); user-select: none; }
+  header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--head); }
+  header img { width: 28px; height: 28px; border-radius: 50%; }
+  .title { font-weight: 600; font-size: 14px; }
+  .state { color: var(--weak); font-size: 12px; margin-top: 1px; }
+  .item { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+  .item.click { cursor: pointer; }
+  .item.click:hover { background: var(--hover); }
+  .item svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .item span { flex: 1; }
+  .item .val { flex: none; color: var(--weak); font-size: 12px; }
+  .switch { position: relative; width: 30px; height: 17px; border-radius: 9px; background: var(--off); transition: background .15s; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .switch.on { background: var(--on); }
+  .switch.on::after { left: 15px; }
+  footer { padding: 8px 14px; color: var(--weak); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <img src="icons/48.png" alt="">
+  <div><div class="title">GaGaDown</div><div class="state" id="stateText">检测中</div></div>
+</header>
+<div class="item click" id="toggleRow">
+  <svg viewBox="0 0 24 24"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14"/></svg>
+  <span>接管浏览器下载</span><div id="toggle" class="switch"></div>
+</div>
+<div class="item">
+  <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h9"/></svg>
+  <span>最小接管大小</span><span class="val" id="minSize">-</span>
+</div>
+<footer id="ver"></footer>
+<script src="popup.js"></script>
+</body>
+</html>

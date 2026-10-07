@@ -1,0 +1,11 @@
+[package]
+name = "gagadown-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+gagadown-core = { version = "0.1.0", path = "../gagadown-core" }
+tokio = { version = "1.53.2", features = ["full"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
