@@ -1735,7 +1735,14 @@ impl App {
             self.deleted.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
         }
         for n in self.engine.take_notices() {
-            self.toast(n.text, false);
+            use gagadown_core::engine::NoticeKind;
+            let (text, failed) = match n.kind {
+                NoticeKind::Completed { filename } => (self.catalog.message("notice-completed", &[("filename", &filename)]), false),
+                NoticeKind::Failed { filename, error } => (self.catalog.message("notice-failed", &[("filename", &filename), ("reason", &error_summary(&error, &self.catalog))]), true),
+                NoticeKind::WaitingForDisk => (self.catalog.message("notice-waiting-disk", &[]), false),
+                NoticeKind::RemovalFailed { diagnostic } => (self.catalog.message("notice-removal-failed", &[("error", &diagnostic)]), true),
+            };
+            self.toast(text, failed);
         }
         let api_error = self.api_error.lock().take();
         if let Some((port, error)) = api_error {

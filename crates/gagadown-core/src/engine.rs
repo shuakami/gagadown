@@ -78,7 +78,16 @@ impl TaskEntry {
 #[derive(Clone, Debug)]
 pub struct Notice {
     pub at: u64,
-    pub text: String,
+    pub kind: NoticeKind,
+}
+
+/// Locale-neutral events, translated by the presentation layer.
+#[derive(Clone, Debug)]
+pub enum NoticeKind {
+    Completed { filename: String },
+    Failed { filename: String, error: TaskError },
+    WaitingForDisk,
+    RemovalFailed { diagnostic: String },
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -149,9 +158,9 @@ impl Inner {
         v
     }
 
-    fn notify(&self, text: impl Into<String>) {
+    fn notify(&self, kind: NoticeKind) {
         let mut n = self.notices.lock();
-        n.push_back(Notice { at: now_secs(), text: text.into() });
+        n.push_back(Notice { at: now_secs(), kind });
         while n.len() > 20 {
             n.pop_front();
         }
@@ -189,7 +198,7 @@ impl Inner {
                 r.next_retry_at = None;
                 let name = r.filename.clone();
                 drop(r);
-                self.notify(format!("下载完成 {name}"));
+                self.notify(NoticeKind::Completed { filename: name });
             }
             Err(e) if e.kind == ErrorKind::Cancelled || reason != StopReason::None as u8 => {
                 r.status = if reason == StopReason::Shutdown as u8 { Status::Queued } else { Status::Paused };
@@ -209,7 +218,9 @@ impl Inner {
                 r.log.push(LogLine { at: now_secs(), text: line });
                 let name = r.filename.clone();
                 drop(r);
-                self.notify(format!("下载失败 {name}: {reason}"));
+                self.notify(NoticeKind::Failed { filename: name, error: TaskError {
+                    kind: e.kind, message: e.message, at: now_secs(), status: e.status, routes: e.routes,
+                } });
             }
         }
         *entry.run.lock() = None;
@@ -687,7 +698,7 @@ impl Engine {
             // Never detach a run and then unlink its open file. Preallocation
             // and blocking writes must finish before Windows can reclaim it.
             if tokio::time::timeout(Duration::from_secs(10), &mut j).await.is_err() {
-                self.inner.notify("正在等待磁盘操作结束，结束后将自动继续；无需再次点击");
+                self.inner.notify(NoticeKind::WaitingForDisk);
                 let _ = j.await;
             }
         }
@@ -733,7 +744,7 @@ impl Engine {
         })();
         if let Err(e) = cleanup {
             t.log(format!("删除失败，保留任务以便重试: {e}"));
-            self.inner.notify(format!("删除失败: {e}"));
+            self.inner.notify(NoticeKind::RemovalFailed { diagnostic: e.to_string() });
             self.inner.dirty.store(true, Ordering::Relaxed);
             let _ = self.save();
             return;

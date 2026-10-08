@@ -343,6 +343,9 @@ mod tests {
                 ("retry-after", vec![("time", "12 s")]),
                 ("api-unavailable", vec![("port", "18765"), ("error", "fixture")]),
                 ("handoff-failed", vec![("error", "fixture")]),
+                ("notice-completed", vec![("filename", "fixture.bin")]),
+                ("notice-failed", vec![("filename", "fixture.bin"), ("reason", "fixture")]),
+                ("notice-removal-failed", vec![("error", "fixture")]),
             ] {
                 let mut args = FluentArgs::new();
                 for (name, value) in values { args.set(name, value); }
