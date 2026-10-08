@@ -119,6 +119,13 @@ labels! {
     CliConnections => "cli-connections",
     CliSplits => "cli-splits",
     CliFailed => "cli-failed",
+    Refresh => "refresh",
+    Downloading => "downloading",
+    OrphanFiles => "orphan-files",
+    DiskFree => "disk-free",
+    CleanOrphans => "clean-orphans",
+    CleanTrashCache => "clean-trash-cache",
+    Orphan => "orphan",
     ExtensionIntro => "extension-intro",
     BrowserNotFound => "browser-not-found",
     OpenExtensionFolder => "open-extension-folder",
@@ -126,6 +133,8 @@ labels! {
     Disconnected => "disconnected",
     Reinstall => "reinstall",
     InstallExtension => "install-extension",
+    EdgeDeveloperMode => "edge-developer-mode",
+    EdgeLoadUnpacked => "edge-load-unpacked",
     DeveloperMode => "developer-mode",
     LoadUnpacked => "load-unpacked",
     InstallationSteps => "installation-steps",
@@ -203,6 +212,13 @@ impl Catalog {
         let value = self.bundle.format_pattern(pattern, args, &mut errors);
         if errors.is_empty() { Ok(value.into_owned()) }
         else { Err(format!("Fluent message {key}: {errors:?}")) }
+    }
+
+    /// Format a presentation message with string parameters; errors remain visible.
+    pub fn message(&self, key: &str, values: &[(&str, &str)]) -> String {
+        let mut args = FluentArgs::new();
+        for &(name, value) in values { args.set(name, value); }
+        self.format(key, Some(&args)).unwrap_or_else(|error| error)
     }
 
     pub fn completed_downloads(&self, count: u32, size: &str) -> Result<String, String> {

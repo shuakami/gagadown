@@ -1674,13 +1674,13 @@ impl App {
         if let Some((b, id)) = b.as_ref().and_then(|b| Some((b, b.store_id?))) {
             if win::register_extension(b.reg, id, b.update_url) {
                 let _ = std::process::Command::new(&b.exe).arg(format!("{}{id}", b.store_page)).spawn();
-                self.toast(format!("已添加到 {}，重启浏览器后点“启用”", b.name), false);
+                self.toast(self.catalog.message("extension-added", &[("browser", &b.name)]), false);
                 return;
             }
         }
         let dir = match unpack_extension(self.engine.data_dir()) {
             Ok(d) => d,
-            Err(e) => return self.toast(format!("解压插件失败：{e}"), true),
+            Err(e) => return self.toast(self.catalog.message("extension-unpack-failed", &[("error", &e.to_string())]), true),
         };
         match b {
             Some(b) => {
@@ -1745,7 +1745,7 @@ impl App {
         for url in text.split_whitespace().filter(|u| u.contains("://")) {
             let req = AddRequest { url: url.to_string(), source: Some("manual".into()), ..Default::default() };
             match self.engine.add(req, None) {
-                Ok(o) if o.existed => self.toast(format!("已在列表中：{}", o.filename), false),
+                Ok(o) if o.existed => self.toast(self.catalog.message("task-already-listed", &[("filename", &o.filename)]), false),
                 Ok(_) => added += 1,
                 Err(e) => self.toast(format!("{e}"), true),
             }
@@ -2504,7 +2504,11 @@ impl App {
                     act = Some(sel);
                 }
 
-                let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载已解压的扩展程序") };
+                let (dev, load) = if b.key == "edge" {
+                    (self.catalog.text(Label::EdgeDeveloperMode), self.catalog.text(Label::EdgeLoadUnpacked))
+                } else {
+                    (self.catalog.text(Label::DeveloperMode), self.catalog.text(Label::LoadUnpacked))
+                };
                 ui.add_space(24.0);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
                 text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, self.catalog.text(Label::InstallationSteps), bold(13.5), p.text, w);
@@ -2512,9 +2516,9 @@ impl App {
                 text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, self.catalog.text(Label::InstallExplanation), font(12.0), p.weak, w);
                 ui.add_space(8.0);
                 let steps = [
-                    format!("在浏览器地址栏粘贴 {} 并回车", b.page),
-                    format!("在扩展页打开“{dev}”开关"),
-                    format!("点击“{load}”"),
+                    self.catalog.message("extension-paste-page", &[("page", &b.page)]),
+                    self.catalog.message("extension-enable-mode", &[("mode", dev)]),
+                    self.catalog.message("extension-click-load", &[("load", load)]),
                     self.catalog.text(Label::ExtensionSelectFolder).to_owned(),
                 ];
                 let ind = 30.0;
@@ -2578,7 +2582,7 @@ impl App {
     }
 
     fn cache_page(&mut self, ui: &mut Ui, p: &Pal) {
-        if Self::page_title(ui, "缓存", None, &[(ic::ARROW_CLOCKWISE, "刷新")], p) == Some(0) {
+        if Self::page_title(ui, self.catalog.text(Label::Cache), None, &[(ic::ARROW_CLOCKWISE, self.catalog.text(Label::Refresh))], p) == Some(0) {
             self.cache = Some(self.engine.cache_report());
         }
         let Some(rep) = self.cache.clone() else { return };
@@ -2592,26 +2596,26 @@ impl App {
                     });
                     ui.add_space(16.0);
                 };
-                stat(ui, "下载中", bytes(rep.active_bytes));
-                stat(ui, "回收站", bytes(rep.deleted_bytes));
-                stat(ui, "孤儿文件", bytes(rep.orphan_bytes));
+                stat(ui, self.catalog.text(Label::Downloading), bytes(rep.active_bytes));
+                stat(ui, self.catalog.text(Label::Trash), bytes(rep.deleted_bytes));
+                stat(ui, self.catalog.text(Label::OrphanFiles), bytes(rep.orphan_bytes));
                 if let Some(f) = rep.free_space {
-                    stat(ui, "磁盘剩余", bytes(f));
+                    stat(ui, self.catalog.text(Label::DiskFree), bytes(f));
                 }
             });
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if rep.orphan_bytes > 0 && btn(ui, "清理孤儿文件", true, p) {
+                if rep.orphan_bytes > 0 && btn(ui, self.catalog.text(Label::CleanOrphans), true, p) {
                     let n = self.engine.clean_cache(true, false);
-                    self.toast(format!("已释放 {}", bytes(n)), false);
+                    self.toast(self.catalog.message("cache-freed", &[("size", &bytes(n))]), false);
                     self.cache = Some(self.engine.cache_report());
                 }
-                if rep.deleted_bytes > 0 && btn(ui, "清理回收站缓存", false, p) {
+                if rep.deleted_bytes > 0 && btn(ui, self.catalog.text(Label::CleanTrashCache), false, p) {
                     let n = self.engine.clean_cache(false, true);
-                    self.toast(format!("已释放 {}", bytes(n)), false);
+                    self.toast(self.catalog.message("cache-freed", &[("size", &bytes(n))]), false);
                     self.cache = Some(self.engine.cache_report());
                 }
-                if rep.missing_files > 0 && btn(ui, &format!("移除文件丢失的任务 ({})", rep.missing_files), false, p) {
+                if rep.missing_files > 0 && btn(ui, &self.catalog.message("prune-missing", &[("count", &rep.missing_files.to_string())]), false, p) {
                     self.engine.prune_missing();
                     self.cache = Some(self.engine.cache_report());
                     self.last_refresh = None;
@@ -2627,13 +2631,13 @@ impl App {
                     pt.rect_filled(r, 0.0, p.hover);
                 }
                 let (k, c) = match it.kind {
-                    CacheKind::Active => ("下载中", p.accent),
-                    CacheKind::Deleted => ("回收站", p.orange),
-                    CacheKind::Orphan => ("孤儿", p.red),
+                    CacheKind::Active => (self.catalog.text(Label::Downloading), p.accent),
+                    CacheKind::Deleted => (self.catalog.text(Label::Trash), p.orange),
+                    CacheKind::Orphan => (self.catalog.text(Label::Orphan), p.red),
                 };
                 pt.text(pos2(r.left() + 20.0, r.center().y), Align2::LEFT_CENTER, k, font(12.0), c);
-                pt.text(pos2(r.left() + 80.0, r.center().y), Align2::LEFT_CENTER, bytes(it.bytes), font(12.0), p.text);
-                text_line(pt, pos2(r.left() + 170.0, r.center().y), Align2::LEFT_CENTER, it.path.display().to_string(), font(12.0), p.weak, r.width() - 190.0);
+                pt.text(pos2(r.left() + 125.0, r.center().y), Align2::LEFT_CENTER, bytes(it.bytes), font(12.0), p.text);
+                text_line(pt, pos2(r.left() + 215.0, r.center().y), Align2::LEFT_CENTER, it.path.display().to_string(), font(12.0), p.weak, r.width() - 235.0);
             }
         });
     }
