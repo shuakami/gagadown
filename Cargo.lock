@@ -1300,6 +1300,7 @@ dependencies = [
  "egui-phosphor",
  "embed-resource",
  "gagadown-core",
+ "gagadown-i18n",
  "parking_lot",
  "png",
  "raw-window-handle",
@@ -1362,6 +1363,7 @@ name = "gagadown-i18n"
 version = "0.1.0"
 dependencies = [
  "fluent-bundle",
+ "fluent-syntax",
  "sys-locale",
  "unic-langid",
 ]

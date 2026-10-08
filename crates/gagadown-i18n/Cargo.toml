@@ -7,3 +7,6 @@ edition = "2024"
 fluent-bundle = "0.16"
 unic-langid = "0.9"
 sys-locale = "0.3"
+
+[dev-dependencies]
+fluent-syntax = "0.12"

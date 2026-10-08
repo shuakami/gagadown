@@ -132,6 +132,11 @@ Release panic=abort makes panic avoidance a release gate.
 - Added work-branch-only validation workflow with no release permissions. Rust builds/tests run in CI, not locally.
 - Lockfile resolution preserves existing package versions; metadata downloaded dependencies but did not compile locally.
 
+- CI run 37754063141, catalogs job passed for eca5a4c: extension tests and initial Fluent unit tests. Packaging and Windows jobs were still running at inspection; this is not full CI acceptance.
+- Added AST-based bilingual key/argument parity tests, including nested selectors and a mutation-detection test. Awaiting CI for these new tests.
+- Integrated the shared catalog into App startup with fallible initialization, persisted language preference and a settings selector. Migrated settings controls and proxy mode labels to typed cached labels. Remaining GUI surfaces, CLI and core diagnostic migration are still outstanding.
+- Added old-settings compatibility and preference round-trip tests. Added English README with reciprocal links and included both READMEs and LICENSE in the source package.
+
 ## Observations recorded so far
 
 - Existing app text helpers round galley origin to physical pixels; this alone does not establish final glyph alignment.

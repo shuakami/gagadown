@@ -15,6 +15,7 @@ directories = "6.0.0"
 eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11"] }
 egui-phosphor = "0.14"
 gagadown-core = { version = "0.1.0", path = "../gagadown-core" }
+gagadown-i18n = { version = "0.1.0", path = "../gagadown-i18n" }
 parking_lot = "0.12.5"
 rfd = "0.17.2"
 png = "0.18"

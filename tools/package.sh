@@ -9,5 +9,5 @@ rm -rf dist && mkdir -p dist
 makensis -INPUTCHARSET UTF8 -V2 -DVERSION="$V" installer/gagadown.nsi
 cp target/$T/release/GagaDown.exe "dist/GagaDown-$V-portable.exe"
 cp target/$T/release/gagadown-cli.exe "dist/gagadown-cli-$V.exe"
-zip -qr "dist/GagaDown-$V-src.zip" Cargo.toml Cargo.lock README.md .gitignore assets crates extension installer patches tools -x '*/target/*' '*__pycache__*'
+zip -qr "dist/GagaDown-$V-src.zip" Cargo.toml Cargo.lock README.md README.en.md LICENSE .gitignore assets crates extension installer patches tools -x '*/target/*' '*__pycache__*'
 ls -la dist

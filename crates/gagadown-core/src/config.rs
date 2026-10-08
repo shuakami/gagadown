@@ -58,6 +58,8 @@ impl Default for ProxySettings {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Presentation preference: zh-CN (default), en, or system.
+    pub language: String,
     pub download_dir: PathBuf,
     /// Connections a single task starts with (the controller then probes upward).
     pub initial_connections: usize,
@@ -98,6 +100,7 @@ impl Default for Settings {
             .and_then(|u| u.download_dir().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         Self {
+            language: "zh-CN".to_owned(),
             download_dir,
             initial_connections: 16,
             max_connections_per_task: 64,
@@ -123,6 +126,9 @@ impl Default for Settings {
 
 impl Settings {
     pub fn sanitized(mut self) -> Self {
+        if !matches!(self.language.as_str(), "zh-CN" | "en" | "system") {
+            self.language = "zh-CN".to_owned();
+        }
         self.initial_connections = self.initial_connections.clamp(1, 256);
         self.max_connections_per_task = self.max_connections_per_task.clamp(1, 256);
         self.initial_connections = self.initial_connections.min(self.max_connections_per_task);

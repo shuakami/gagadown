@@ -10,6 +10,7 @@ use gagadown_core::config::{ProxyMode, Settings};
 use gagadown_core::engine::{CacheKind, CacheReport, Engine, PopupEvent};
 use gagadown_core::task::{now_secs, AddRequest, DeletedRecord, Phase, RemoveMode, Status, TaskView};
 use parking_lot::Mutex;
+use gagadown_i18n::{Catalog, Label, Language};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -135,6 +136,7 @@ enum Glyph {
 }
 
 struct App {
+    catalog: Catalog,
     rt: tokio::runtime::Runtime,
     engine: Engine,
     page: Page,
@@ -191,6 +193,15 @@ struct Handoff {
     at: u64,
     name: String,
     reason: String,
+}
+
+fn proxy_label(mode: ProxyMode) -> Label {
+    match mode {
+        ProxyMode::DirectThenProxy => Label::DirectThenProxy,
+        ProxyMode::DirectOnly => Label::DirectOnly,
+        ProxyMode::ProxyThenDirect => Label::ProxyThenDirect,
+        ProxyMode::ProxyOnly => Label::ProxyOnly,
+    }
 }
 
 fn bytes(n: u64) -> String {
@@ -1596,10 +1607,11 @@ impl App {
         }
     }
 
-    fn new(rt: tokio::runtime::Runtime, engine: Engine, api_error: Arc<Mutex<Option<String>>>, icon: Arc<egui::IconData>, accent: Color32) -> Self {
+    fn new(rt: tokio::runtime::Runtime, engine: Engine, api_error: Arc<Mutex<Option<String>>>, icon: Arc<egui::IconData>, accent: Color32, catalog: Catalog) -> Self {
         let draft = engine.settings();
         let draft_proxies = draft.proxy.proxies.join("\n");
         Self {
+            catalog,
             rt,
             engine,
             page: Page::Downloads,
@@ -1845,10 +1857,10 @@ impl App {
                 .frame(egui::Frame::NONE)
                 .font(font(12.5))
                 .vertical_align(egui::Align::Center)
-                .hint_text(RichText::new("粘贴下载链接或搜索").color(p.weak)),
+                .hint_text(RichText::new(self.catalog.text(Label::LinkPlaceholder)).color(p.weak)),
         );
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, "下载", p);
+        let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, self.catalog.text(Label::Download), p);
         if enter || clicked {
             self.add_input();
         }
@@ -2660,92 +2672,108 @@ impl App {
                 ui.vertical(|ui| {
                     ui.set_width(w);
                     ui.add_space(36.0);
-                    ui.label(RichText::new("设置").font(bold(22.0)).color(p.text));
+                    let catalog = &self.catalog;
+                    ui.label(RichText::new(catalog.text(Label::Settings)).font(bold(22.0)).color(p.text));
                     let d = &mut self.draft;
-                    group(ui, p, "常规", |ui, first| {
-                        srow(ui, p, first, "开机自启", "", 52.0, |ui| toggle(ui, &mut d.launch_at_login, p));
-                        srow(ui, p, first, "开机时静默启动", "开机自启时只在托盘运行，不弹出主窗口", 56.0, |ui| {
+                    srow(ui, p, &mut true, catalog.text(Label::Language), "", 52.0, |ui| {
+                        let selected = match d.language.as_str() {
+                            "en" => "English",
+                            "system" => catalog.text(Label::SystemLanguage),
+                            _ => "简体中文",
+                        };
+                        egui::ComboBox::from_id_salt("language").selected_text(selected).show_ui(ui, |ui| {
+                            for (value, text) in [("zh-CN", "简体中文"), ("en", "English"), ("system", catalog.text(Label::SystemLanguage))] {
+                                if menu_choice(ui, text, d.language == value, p) {
+                                    d.language = value.to_owned();
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                    group(ui, p, catalog.text(Label::General), |ui, first| {
+                        srow(ui, p, first, catalog.text(Label::LaunchAtLogin), "", 52.0, |ui| toggle(ui, &mut d.launch_at_login, p));
+                        srow(ui, p, first, catalog.text(Label::SilentStartup), catalog.text(Label::SilentStartupHelp), 56.0, |ui| {
                             ui.add_enabled_ui(d.launch_at_login, |ui| toggle(ui, &mut d.start_minimized, p));
                         });
                     });
-                    group(ui, p, "下载", |ui, first| {
-                        srow(ui, p, first, "下载目录", "", 52.0, |ui| {
-                            if btn(ui, "更改", false, p) {
+                    group(ui, p, catalog.text(Label::Download), |ui, first| {
+                        srow(ui, p, first, catalog.text(Label::DownloadDirectory), "", 52.0, |ui| {
+                            if btn(ui, catalog.text(Label::Change), false, p) {
                                 if let Some(x) = rfd::FileDialog::new().set_directory(&d.download_dir).pick_folder() {
                                     d.download_dir = x;
                                 }
                             }
                             ui.add(egui::Label::new(RichText::new(d.download_dir.display().to_string()).size(13.0).color(p.text)).truncate());
                         });
-                        srow(ui, p, first, "缓存目录", "", 52.0, |ui| {
-                            if btn(ui, "更改", false, p) {
+                        srow(ui, p, first, catalog.text(Label::CacheDirectory), "", 52.0, |ui| {
+                            if btn(ui, catalog.text(Label::Change), false, p) {
                                 if let Some(x) = rfd::FileDialog::new().set_directory(d.cache_dir.as_ref().unwrap_or(&d.download_dir)).pick_folder() {
                                     d.cache_dir = Some(x);
                                 }
                             }
-                            if d.cache_dir.is_some() && btn(ui, "默认", false, p) {
+                            if d.cache_dir.is_some() && btn(ui, catalog.text(Label::Default), false, p) {
                                 d.cache_dir = None;
                             }
                             let (t, c) = match &d.cache_dir {
                                 Some(x) => (x.display().to_string(), p.text),
-                                None => ("下载目录".into(), p.weak),
+                                None => (catalog.text(Label::DownloadDirectory).into(), p.weak),
                             };
                             ui.add(egui::Label::new(RichText::new(t).size(13.0).color(c)).truncate());
                         });
-                        srow(ui, p, first, "同时下载任务", "超出的任务会排队", 56.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::ConcurrentTasks), catalog.text(Label::ConcurrentTasksHelp), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.max_concurrent_tasks).range(1..=64));
                         });
-                        srow(ui, p, first, "初始连接数", "每个任务开始时的连接数", 56.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::InitialConnections), catalog.text(Label::InitialConnectionsHelp), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.initial_connections).range(1..=256));
                         });
-                        srow(ui, p, first, "单任务最大连接数", "自动调节的上限", 56.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::TaskConnections), catalog.text(Label::TaskConnectionsHelp), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.max_connections_per_task).range(1..=256));
                         });
-                        srow(ui, p, first, "全局最大连接数", "所有任务合计", 56.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::TotalConnections), catalog.text(Label::TotalConnectionsHelp), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.max_connections_total).range(1..=4096));
                         });
-                        srow(ui, p, first, "最小分段", "小于这个大小不再切分", 56.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::MinimumSegment), catalog.text(Label::MinimumSegmentHelp), 56.0, |ui| {
                             let mut kb = d.min_split_size / 1024;
                             if ui.add(egui::DragValue::new(&mut kb).range(64..=65536).suffix(" KB")).changed() {
                                 d.min_split_size = kb * 1024;
                             }
                         });
-                        srow(ui, p, first, "限速", "0 为不限", 56.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::SpeedLimit), catalog.text(Label::UnlimitedHelp), 56.0, |ui| {
                             let mut kb = d.speed_limit / 1024;
                             if ui.add(egui::DragValue::new(&mut kb).range(0..=10_000_000).suffix(" KB/s")).changed() {
                                 d.speed_limit = kb * 1024;
                             }
                         });
-                        srow(ui, p, first, "分段重试次数", "", 52.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::SegmentRetries), "", 52.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.segment_retries).range(0..=1000));
                         });
-                        srow(ui, p, first, "任务自动重试次数", "", 52.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::TaskRetries), "", 52.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.task_auto_retries).range(0..=100));
                         });
                     });
-                    group(ui, p, "网络", |ui, first| {
-                        srow(ui, p, first, "代理模式", "", 52.0, |ui| {
-                            egui::ComboBox::from_id_salt("pmode").width(230.0).selected_text(d.proxy.mode.label()).show_ui(ui, |ui| {
+                    group(ui, p, catalog.text(Label::Network), |ui, first| {
+                        srow(ui, p, first, catalog.text(Label::ProxyMode), "", 52.0, |ui| {
+                            egui::ComboBox::from_id_salt("pmode").width(230.0).selected_text(catalog.text(proxy_label(d.proxy.mode))).show_ui(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = 1.0;
                                 for m in ProxyMode::ALL {
-                                    if menu_choice(ui, m.label(), d.proxy.mode == m, p) {
+                                    if menu_choice(ui, catalog.text(proxy_label(m)), d.proxy.mode == m, p) {
                                         d.proxy.mode = m;
                                         ui.close();
                                     }
                                 }
                             });
                         });
-                        srow(ui, p, first, "代理地址", "每行一个", 92.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::ProxyAddresses), catalog.text(Label::OnePerLine), 92.0, |ui| {
                             ui.add(egui::TextEdit::multiline(&mut self.draft_proxies).hint_text("http://127.0.0.1:7890").desired_rows(3).desired_width(260.0));
                         });
-                        srow(ui, p, first, "自动探测本机代理", "扫描 Clash、v2rayN 等常用端口", 56.0, |ui| toggle(ui, &mut d.proxy.auto_detect, p));
-                        srow(ui, p, first, "使用系统代理", "", 52.0, |ui| toggle(ui, &mut d.proxy.use_system, p));
-                        srow(ui, p, first, "直连等待", "超时后同时尝试代理", 56.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::DetectProxies), catalog.text(Label::DetectProxiesHelp), 56.0, |ui| toggle(ui, &mut d.proxy.auto_detect, p));
+                        srow(ui, p, first, catalog.text(Label::SystemProxy), "", 52.0, |ui| toggle(ui, &mut d.proxy.use_system, p));
+                        srow(ui, p, first, catalog.text(Label::DirectWait), catalog.text(Label::DirectWaitHelp), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.proxy.hedge_delay_ms).range(0..=30000).suffix(" ms"));
                         });
                         let found = self.engine.detected_proxies();
-                        let desc = if found.is_empty() { "无".to_string() } else { found.join("  ") };
-                        srow(ui, p, first, "已发现代理", &desc, 56.0, |ui| {
+                        let desc = if found.is_empty() { catalog.text(Label::None).to_owned() } else { found.join("  ") };
+                        srow(ui, p, first, catalog.text(Label::DetectedProxies), &desc, 56.0, |ui| {
                             if self.engine.is_detecting() {
                                 ui.spinner();
                             }
@@ -2754,25 +2782,25 @@ impl App {
                             ui.add(egui::TextEdit::singleline(&mut d.user_agent).desired_width(300.0));
                         });
                     });
-                    group(ui, p, "浏览器", |ui, first| {
-                        srow(ui, p, first, "接管最小文件", "小于这个大小交给浏览器下载", 56.0, |ui| {
+                    group(ui, p, catalog.text(Label::Browser), |ui, first| {
+                        srow(ui, p, first, catalog.text(Label::TakeoverMinimum), catalog.text(Label::TakeoverMinimumHelp), 56.0, |ui| {
                             let mut kb = d.takeover_min_size / 1024;
                             if ui.add(egui::DragValue::new(&mut kb).range(0..=10_000_000).suffix(" KB")).changed() {
                                 d.takeover_min_size = kb * 1024;
                             }
                         });
-                        srow(ui, p, first, "本地端口", "重启后生效", 56.0, |ui| {
+                        srow(ui, p, first, catalog.text(Label::LocalPort), catalog.text(Label::RestartRequired), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.api_port).range(1024..=65535));
                         });
                     });
-                    group(ui, p, "清理", |ui, first| {
-                        srow(ui, p, first, "回收站保留", "", 52.0, |ui| {
-                            ui.add(egui::DragValue::new(&mut d.deleted_retention_days).range(0..=3650).suffix(" 天"));
+                    group(ui, p, catalog.text(Label::Cleanup), |ui, first| {
+                        srow(ui, p, first, catalog.text(Label::TrashRetention), "", 52.0, |ui| {
+                            ui.add(egui::DragValue::new(&mut d.deleted_retention_days).range(0..=3650).suffix(catalog.text(Label::DaysSuffix)));
                         });
-                        srow(ui, p, first, "孤儿文件自动清理", "0 为不清理", 56.0, |ui| {
-                            ui.add(egui::DragValue::new(&mut d.orphan_auto_clean_days).range(0..=3650).suffix(" 天"));
+                        srow(ui, p, first, catalog.text(Label::OrphanCleanup), catalog.text(Label::NeverCleanupHelp), 56.0, |ui| {
+                            ui.add(egui::DragValue::new(&mut d.orphan_auto_clean_days).range(0..=3650).suffix(catalog.text(Label::DaysSuffix)));
                         });
-                        srow(ui, p, first, "完成后刷盘", "确保文件完整写入磁盘", 56.0, |ui| toggle(ui, &mut d.sync_on_complete, p));
+                        srow(ui, p, first, catalog.text(Label::SyncComplete), catalog.text(Label::SyncCompleteHelp), 56.0, |ui| toggle(ui, &mut d.sync_on_complete, p));
                     });
                     self.about(ui, p);
                     ui.add_space(48.0);
@@ -2780,6 +2808,10 @@ impl App {
             });
         });
 
+        let language = Language::from_preference(&self.draft.language);
+        if let Err(error) = self.catalog.switch(language) {
+            self.toast(error, true);
+        }
         let mut cand = self.draft.clone();
         cand.proxy.proxies = self.draft_proxies.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
         let next = serde_json::to_string(&cand).unwrap_or_default();
@@ -3417,7 +3449,9 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             setup_fonts(&cc.egui_ctx);
             apply_style(&cc.egui_ctx, accent);
-            let mut app = App::new(rt, engine.clone(), api_error, icon, accent);
+            let catalog = Catalog::new(Language::from_preference(&engine.settings().language))
+                .map_err(std::io::Error::other)?;
+            let mut app = App::new(rt, engine.clone(), api_error, icon, accent, catalog);
             app.tray = win::tray(cc.egui_ctx.clone(), tray_rgba(), app.quit.clone(), app.hidden.clone());
             app.hidden.store(silent, Ordering::SeqCst);
             let _ = unpack_extension(engine.data_dir());
