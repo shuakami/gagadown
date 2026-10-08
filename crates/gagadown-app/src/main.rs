@@ -2041,12 +2041,10 @@ impl App {
             });
             if let Some(mode) = pick {
                 let ids: Vec<Uuid> = items.iter().map(|v| v.id).collect();
-                let e = self.engine.clone();
-                self.rt.spawn(async move {
-                    for id in ids {
-                        e.remove(id, mode).await;
-                    }
-                });
+                for id in ids {
+                    let e = self.engine.clone();
+                    self.rt.spawn(async move { e.remove(id, mode).await });
+                }
                 self.selected = None;
                 self.last_refresh = None;
             }

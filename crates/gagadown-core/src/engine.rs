@@ -708,12 +708,27 @@ impl Engine {
     }
 
     pub async fn remove(&self, id: Uuid, mode: RemoveMode) {
-        let Some(t) = self.inner.find(id) else { return };
+        // Detach first so the UI and the scheduler stop seeing the task right away;
+        // stopping the run and unlinking files continue in the background.
+        let (t, slot) = {
+            let mut tasks = self.inner.tasks.write();
+            let Some(i) = tasks.iter().position(|t| t.rec.lock().id == id) else { return };
+            (tasks.remove(i), i)
+        };
+        self.inner.dirty.store(true, Ordering::Relaxed);
+        let reattach = |why: String| {
+            t.log(format!("删除失败，已恢复任务以便重试: {why}"));
+            self.inner.notify(format!("删除失败: {why}"));
+            let mut tasks = self.inner.tasks.write();
+            let i = slot.min(tasks.len());
+            tasks.insert(i, t.clone());
+            drop(tasks);
+            self.inner.dirty.store(true, Ordering::Relaxed);
+            let _ = self.save();
+        };
         let _operation = t.operation.lock().await;
-        if self.inner.find(id).is_none() {
-            return;
-        }
         if !self.stop_and_wait(&t, StopReason::Remove).await {
+            reattach("任务仍在运行".into());
             return;
         }
         let rec = t.persistable();
@@ -743,13 +758,9 @@ impl Engine {
             Ok(())
         })();
         if let Err(e) = cleanup {
-            t.log(format!("删除失败，保留任务以便重试: {e}"));
-            self.inner.notify(format!("删除失败: {e}"));
-            self.inner.dirty.store(true, Ordering::Relaxed);
-            let _ = self.save();
+            reattach(e);
             return;
         }
-        self.inner.tasks.write().retain(|x| !Arc::ptr_eq(x, &t));
         if mode != RemoveMode::DeleteFiles {
             self.inner.deleted.lock().insert(0, DeletedRecord { rec, deleted_at: now_secs(), mode });
         }
