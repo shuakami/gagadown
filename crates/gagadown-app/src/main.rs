@@ -222,31 +222,26 @@ fn speed(s: f64) -> String {
     format!("{}/s", bytes(s.max(0.0) as u64))
 }
 
-fn dur(s: u64) -> String {
+fn dur(s: u64, catalog: &Catalog) -> String {
     if s < 60 {
-        format!("{s} 秒")
+        catalog.message("duration-seconds", &[("seconds", &s.to_string())])
     } else if s < 3600 {
-        format!("{} 分 {} 秒", s / 60, s % 60)
+        catalog.message("duration-minutes", &[("minutes", &(s / 60).to_string()), ("seconds", &(s % 60).to_string())])
     } else {
-        format!("{} 小时 {} 分", s / 3600, s % 3600 / 60)
+        catalog.message("duration-hours", &[("hours", &(s / 3600).to_string()), ("minutes", &(s % 3600 / 60).to_string())])
     }
 }
 
-fn ago(ts: u64) -> String {
+fn ago(ts: u64, catalog: &Catalog) -> String {
     let d = now_secs().saturating_sub(ts);
-    if d < 60 {
-        "刚刚".into()
-    } else if d < 3600 {
-        format!("{} 分钟前", d / 60)
-    } else if d < 86400 {
-        format!("{} 小时前", d / 3600)
-    } else {
-        format!("{} 天前", d / 86400)
-    }
+    if d < 60 { catalog.message("just-now", &[]) }
+    else if d < 3600 { catalog.number_message("minutes-ago", d / 60) }
+    else if d < 86400 { catalog.number_message("hours-ago", d / 3600) }
+    else { catalog.number_message("days-ago", d / 86400) }
 }
 
 /// Plain-text error report; query strings are masked since they often carry tokens.
-fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError) -> String {
+fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError, catalog: &Catalog) -> String {
     use std::fmt::Write;
     let masked = match v.url.split_once('?') {
         Some((a, _)) => format!("{a}?…"),
@@ -256,7 +251,7 @@ fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError) -> String {
     let mut s = String::new();
     let _ = writeln!(s, "文件    {}", v.filename);
     let _ = writeln!(s, "链接    {masked}");
-    let _ = writeln!(s, "时间    {}", when(e.at));
+    let _ = writeln!(s, "时间    {}", when(e.at, catalog));
     let _ = writeln!(s, "类型    {:?}", e.kind);
     if let Some(c) = e.status {
         let _ = writeln!(s, "状态码  HTTP {c}");
@@ -279,7 +274,7 @@ fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError) -> String {
     if !v.log.is_empty() {
         s.push_str("\n最近日志\n");
         for l in v.log.iter().rev().take(12).rev() {
-            let _ = writeln!(s, "  {}  {}", when(l.at), scrub(&l.text));
+            let _ = writeln!(s, "  {}  {}", when(l.at, catalog), scrub(&l.text));
         }
     }
     let _ = write!(s, "\nGaGaDown v{}", env!("CARGO_PKG_VERSION"));
@@ -322,16 +317,16 @@ impl Fade {
     }
 }
 
-fn when(ts: u64) -> String {
+fn when(ts: u64, catalog: &Catalog) -> String {
     use chrono::{Datelike, Local, TimeZone};
     let Some(t) = Local.timestamp_opt(ts as i64, 0).single() else { return String::new() };
     let now = Local::now();
     let days = now.date_naive().signed_duration_since(t.date_naive()).num_days();
     match days {
-        0 => t.format("今天 %H:%M").to_string(),
-        1 => t.format("昨天 %H:%M").to_string(),
-        _ if t.year() == now.year() => format!("{}月{}日 {}", t.month(), t.day(), t.format("%H:%M")),
-        _ => format!("{}年{}月{}日", t.year(), t.month(), t.day()),
+        0 => catalog.message("today-time", &[("time", &t.format("%H:%M").to_string())]),
+        1 => catalog.message("yesterday-time", &[("time", &t.format("%H:%M").to_string())]),
+        _ if t.year() == now.year() => t.format("%m-%d %H:%M").to_string(),
+        _ => t.format("%Y-%m-%d").to_string(),
     }
 }
 
@@ -623,7 +618,7 @@ fn of(v: &TaskView) -> String {
     }
 }
 
-fn meta_line(v: &TaskView, p: &Pal) -> (String, Color32) {
+fn meta_line(v: &TaskView, p: &Pal, catalog: &Catalog) -> (String, Color32) {
     match v.status {
         Status::Queued if v.downloaded > 0 => (format!("排队中   {}", of(v)), p.weak),
         Status::Queued => ("排队中".into(), p.weak),
@@ -632,7 +627,7 @@ fn meta_line(v: &TaskView, p: &Pal) -> (String, Color32) {
             Some(Phase::Downloading) | None => {
                 let mut s = format!("{}   {}", of(v), speed(v.speed));
                 if let Some(e) = v.eta_secs {
-                    s += &format!("   剩余 {}", dur(e));
+                    s += &format!("   剩余 {}", dur(e, catalog));
                 }
                 (s, p.weak)
             }
@@ -654,7 +649,7 @@ fn meta_line(v: &TaskView, p: &Pal) -> (String, Color32) {
                 None => "失败".into(),
             };
             if let Some(t) = v.next_retry_at {
-                s += &format!("，{} 后自动重试", dur(t.saturating_sub(now_secs())));
+                s += &format!("，{} 后自动重试", dur(t.saturating_sub(now_secs()), catalog));
             }
             (s, p.red)
         }
@@ -1989,8 +1984,8 @@ impl App {
         pt.text(pos2(left.right(), y), Align2::RIGHT_CENTER, right, font(12.0), p.weak);
 
         let eta = match (v.status, v.eta_secs) {
-            (Status::Running, Some(e)) => format!("剩余时间 {}", dur(e)),
-            (Status::Running, None) => meta_line(v, p).0,
+            (Status::Running, Some(e)) => format!("剩余时间 {}", dur(e, &self.catalog)),
+            (Status::Running, None) => meta_line(v, p, &self.catalog).0,
             _ => String::new(),
         };
         pt.text(pos2(left.left(), y + 38.0), Align2::LEFT_CENTER, eta, font(12.0), p.weak);
@@ -2135,7 +2130,7 @@ impl App {
             self.paint_file(&ctx, &pt, pos2(r.left() + 30.0, r.center().y), 26.0, &h.name, None, p, 0.7);
             let w = (r.width() - 52.0 - 56.0).max(80.0);
             text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &h.name, font(13.5), p.text, w);
-            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, self.catalog.message("handoff-entry", &[("reason", &h.reason), ("time", &ago(h.at))]), font(12.0), p.red, w);
+            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, self.catalog.message("handoff-entry", &[("reason", &h.reason), ("time", &ago(h.at, &self.catalog))]), font(12.0), p.red, w);
             if hovered {
                 let b = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
                 if icon_at(ui, b, resp.id.with(("handoff_x", i)), ic::X, self.catalog.text(Label::RemoveRecord), p) {
@@ -2181,7 +2176,7 @@ impl App {
         let name_w = (r.width() - 52.0 - right_w - 24.0).max(80.0);
         let q = self.input.trim().to_owned();
         text_line_hl(&pt, pos2(x0, r.top() + 15.0), Align2::LEFT_CENTER, &v.filename, &q, font(13.5), p.text, p, name_w);
-        let (meta, mc) = meta_line(v, p);
+        let (meta, mc) = meta_line(v, p, &self.catalog);
         text_line(&pt, pos2(x0, r.top() + 32.0), Align2::LEFT_CENTER, meta, font(12.0), mc, name_w);
 
         let rx = r.right() - 14.0;
@@ -2210,7 +2205,7 @@ impl App {
                         pt.text(pos2(rx, r.top() + 15.0), Align2::RIGHT_CENTER, self.catalog.text(Label::Completed), font(12.0), p.green.gamma_multiply(ease_out_cubic(t / 0.4)));
                     } else if let Some(f) = v.finished_at {
                         let a = ease_out_cubic((t - 1.3) / 0.35);
-                        pt.text(pos2(rx, r.center().y), Align2::RIGHT_CENTER, self.catalog.message("completed-at", &[("time", &when(f))]), font(12.0), p.weak.gamma_multiply(a));
+                        pt.text(pos2(rx, r.center().y), Align2::RIGHT_CENTER, self.catalog.message("completed-at", &[("time", &when(f, &self.catalog))]), font(12.0), p.weak.gamma_multiply(a));
                     }
                 }
                 _ => {}
@@ -2259,7 +2254,7 @@ impl App {
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 2, bottom: 16 }).show(ui, |ui| {
                 ui.add(egui::Label::new(RichText::new(&v.filename).font(bold(14.0)).color(p.text)).wrap());
-                let (m, c) = meta_line(v, p);
+                let (m, c) = meta_line(v, p, &self.catalog);
                 ui.add(egui::Label::new(RichText::new(m).size(12.0).color(c)).wrap());
                 if v.status == Status::Failed && v.error.is_some() {
                     ui.add_space(4.0);
@@ -2313,7 +2308,7 @@ impl App {
                         ui.end_row();
                     }
                     k(ui, self.catalog.text(Label::AddedAt));
-                    val(ui, when(v.created_at));
+                    val(ui, when(v.created_at, &self.catalog));
                     ui.end_row();
                     k(ui, self.catalog.text(Label::SaveTo));
                     ui.allocate_ui_with_layout(vec2(vw, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -2402,7 +2397,7 @@ impl App {
                     RemoveMode::TrashFiles => self.catalog.text(Label::FilesInRecycleBin),
                     RemoveMode::DeleteFiles => self.catalog.text(Label::FilesDeleted),
                 };
-                text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, self.catalog.message("trash-item", &[("size", &size), ("mode", mode), ("time", &ago(d.deleted_at))]), font(12.0), p.weak, w);
+                text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, self.catalog.message("trash-item", &[("size", &size), ("mode", mode), ("time", &ago(d.deleted_at, &self.catalog))]), font(12.0), p.weak, w);
                 if hovered {
                     let b2 = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
                     let b1 = b2.translate(vec2(-28.0, 0.0));
@@ -2866,7 +2861,7 @@ impl App {
 
     fn error_modal(&mut self, ctx: &egui::Context, p: &Pal) {
         let Some(id) = self.err_report else { return };
-        let found = self.views.iter().find(|v| v.id == id).and_then(|v| v.error.as_ref().map(|e| (v.filename.clone(), e.summary(), error_report(v, e))));
+        let found = self.views.iter().find(|v| v.id == id).and_then(|v| v.error.as_ref().map(|e| (v.filename.clone(), e.summary(), error_report(v, e, &self.catalog))));
         let Some((name, summary, report)) = found else {
             self.err_report = None;
             self.er_fade = Fade::default();
@@ -3232,7 +3227,7 @@ impl App {
                 let r1 = text_line(&pt, pos2(b.left(), y), Align2::LEFT_CENTER, self.catalog.text(Label::DownloadComplete), font(12.5), p.green.gamma_multiply(a), 120.0);
                 let mut extra = Vec::new();
                 if let Some(fin) = v.finished_at {
-                    extra.push(format!("用时 {}", dur(fin.saturating_sub(v.created_at).max(1))));
+                    extra.push(format!("用时 {}", dur(fin.saturating_sub(v.created_at).max(1), &self.catalog)));
                 }
                 if v.avg_speed > 0.0 {
                     extra.push(format!("平均 {}", speed(v.avg_speed)));
@@ -3242,10 +3237,10 @@ impl App {
                 let sp = speed(spring(&ctx, key.with("spd"), v.speed as f32, 5.0, 0.0) as f64);
                 let (line, lc) = match v.status {
                     Status::Running => match v.eta_secs {
-                        Some(e) => (format!("{sp}   剩余 {}   {} 连接", dur(e), v.connections), p.weak),
+                        Some(e) => (format!("{sp}   剩余 {}   {} 连接", dur(e, &self.catalog), v.connections), p.weak),
                         None => (format!("{sp}   {} 连接", v.connections), p.weak),
                     },
-                    _ => meta_line(v, p),
+                    _ => meta_line(v, p, &self.catalog),
                 };
                 text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, line, font(12.0), lc, b.width() - 60.0);
                 pt.text(pos2(b.right(), by + 22.0), Align2::RIGHT_CENTER, format!("{:.0}%", f * 100.0), font(12.0), p.weak);

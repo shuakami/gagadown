@@ -17,6 +17,24 @@ cli-language = Display language: zh-CN, en, or system
 cli-connections = connections
 cli-splits = splits
 cli-failed = Download failed
+duration-seconds = { $seconds } s
+duration-minutes = { $minutes } min { $seconds } s
+duration-hours = { $hours } h { $minutes } min
+just-now = Just now
+minutes-ago = { $count ->
+    [one] { $count } minute ago
+   *[other] { $count } minutes ago
+    }
+hours-ago = { $count ->
+    [one] { $count } hour ago
+   *[other] { $count } hours ago
+    }
+days-ago = { $count ->
+    [one] { $count } day ago
+   *[other] { $count } days ago
+    }
+today-time = Today { $time }
+yesterday-time = Yesterday { $time }
 start-all = Start all
 pause-all = Pause all
 retry-all = Retry all

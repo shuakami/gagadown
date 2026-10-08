@@ -268,6 +268,12 @@ impl Catalog {
         self.format("completed-downloads", Some(&args))
     }
 
+    pub fn number_message(&self, key: &str, count: u64) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count as f64);
+        self.format(key, Some(&args)).unwrap_or_else(|error| error)
+    }
+
     pub fn task_count(&self, count: u32) -> Result<String, String> {
         let mut args = FluentArgs::new();
         args.set("count", count);
