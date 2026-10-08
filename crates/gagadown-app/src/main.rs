@@ -2042,9 +2042,9 @@ impl App {
         let key = Id::new(("section", sec as u8));
         let open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, true));
         let (title, actions): (&str, &[(&str, &str)]) = match sec {
-            Sec::Active => ("下载中", &[(ic::PLAY, "全部开始"), (ic::PAUSE, "全部暂停")]),
-            Sec::Failed => ("失败", &[(ic::ARROW_CLOCKWISE, "全部重试")]),
-            Sec::Done => ("已完成", &[(ic::BROOM, "清除全部")]),
+            Sec::Active => (self.catalog.text(Label::Downloading), &[(ic::PLAY, self.catalog.text(Label::StartAll)), (ic::PAUSE, self.catalog.text(Label::PauseAll))]),
+            Sec::Failed => (self.catalog.text(Label::Failed), &[(ic::ARROW_CLOCKWISE, self.catalog.text(Label::RetryAll))]),
+            Sec::Done => (self.catalog.text(Label::Completed), &[(ic::BROOM, self.catalog.text(Label::ClearAll))]),
         };
         let actions = if items.is_empty() { &[][..] } else { actions };
         let (toggle, hit, btns) = header(ui, title, Some(items.len()), Some(open), actions, p);
@@ -2065,9 +2065,9 @@ impl App {
                 ui.set_width(190.0);
                 ui.spacing_mut().item_spacing.y = 1.0;
                 for (mode, label, danger) in [
-                    (RemoveMode::KeepFiles, "清除全部，保留文件", false),
-                    (RemoveMode::TrashFiles, "清除全部，文件移到回收站", false),
-                    (RemoveMode::DeleteFiles, "清除全部并彻底删除文件", true),
+                    (RemoveMode::KeepFiles, self.catalog.text(Label::ClearAllKeep), false),
+                    (RemoveMode::TrashFiles, self.catalog.text(Label::ClearAllTrash), false),
+                    (RemoveMode::DeleteFiles, self.catalog.text(Label::ClearAllDelete), true),
                 ] {
                     if menu_item(ui, label, danger, p) {
                         pick = Some(mode);
@@ -2096,8 +2096,8 @@ impl App {
         if items.is_empty() {
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
             let t = match sec {
-                Sec::Active => "队列中无下载",
-                _ => "暂无",
+                Sec::Active => self.catalog.text(Label::QueueEmpty),
+                _ => self.catalog.text(Label::Empty),
             };
             ui.painter().text(pos2(r.left() + 52.0, r.center().y), Align2::LEFT_CENTER, t, font(12.5), p.weak);
             return;
@@ -2113,7 +2113,7 @@ impl App {
         let ctx = ui.ctx().clone();
         let key = Id::new("section_handoff");
         let open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, true));
-        let (toggle, hit, _) = header(ui, "未接管", Some(self.handoff_fails.len()), Some(open), &[(ic::BROOM, "清除记录")], p);
+        let (toggle, hit, _) = header(ui, self.catalog.text(Label::NotTakenOver), Some(self.handoff_fails.len()), Some(open), &[(ic::BROOM, self.catalog.text(Label::ClearRecords))], p);
         if toggle {
             ctx.data_mut(|d| d.insert_persisted(key, !open));
         }
@@ -2135,10 +2135,10 @@ impl App {
             self.paint_file(&ctx, &pt, pos2(r.left() + 30.0, r.center().y), 26.0, &h.name, None, p, 0.7);
             let w = (r.width() - 52.0 - 56.0).max(80.0);
             text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &h.name, font(13.5), p.text, w);
-            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, format!("{}   已交给浏览器下载   {}", h.reason, ago(h.at)), font(12.0), p.red, w);
+            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, self.catalog.message("handoff-entry", &[("reason", &h.reason), ("time", &ago(h.at))]), font(12.0), p.red, w);
             if hovered {
                 let b = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
-                if icon_at(ui, b, resp.id.with(("handoff_x", i)), ic::X, "移除记录", p) {
+                if icon_at(ui, b, resp.id.with(("handoff_x", i)), ic::X, self.catalog.text(Label::RemoveRecord), p) {
                     drop = Some(i);
                 }
             }
@@ -2149,18 +2149,18 @@ impl App {
         ui.add_space(6.0);
     }
 
-    fn row_actions(v: &TaskView) -> Vec<(&'static str, &'static str, Act)> {
+    fn row_actions(&self, v: &TaskView) -> Vec<(&'static str, &str, Act)> {
         let mut a = match v.status {
-            Status::Running | Status::Queued => vec![(ic::PAUSE, "暂停", Act::Pause)],
-            Status::Paused => vec![(ic::PLAY, "继续", Act::Resume), (ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
-            Status::Failed => vec![(ic::PLAY, "重试", Act::Resume), (ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
-            Status::Completed if v.file_missing => vec![(ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
-            Status::Completed => vec![(ic::FOLDER_OPEN, "打开所在文件夹", Act::Reveal)],
+            Status::Running | Status::Queued => vec![(ic::PAUSE, self.catalog.text(Label::Pause), Act::Pause)],
+            Status::Paused => vec![(ic::PLAY, self.catalog.text(Label::Resume), Act::Resume), (ic::ARROW_CLOCKWISE, self.catalog.text(Label::Redownload), Act::Redownload)],
+            Status::Failed => vec![(ic::PLAY, self.catalog.text(Label::Retry), Act::Resume), (ic::ARROW_CLOCKWISE, self.catalog.text(Label::Redownload), Act::Redownload)],
+            Status::Completed if v.file_missing => vec![(ic::ARROW_CLOCKWISE, self.catalog.text(Label::Redownload), Act::Redownload)],
+            Status::Completed => vec![(ic::FOLDER_OPEN, self.catalog.text(Label::OpenFolder), Act::Reveal)],
         };
         if v.status == Status::Failed && v.error.is_some() {
-            a.insert(0, (ic::INFO, "错误详情", Act::ErrorInfo));
+            a.insert(0, (ic::INFO, self.catalog.text(Label::ErrorDetails), Act::ErrorInfo));
         }
-        a.push((ic::TRASH, "删除", Act::Remove));
+        a.push((ic::TRASH, self.catalog.text(Label::Delete), Act::Remove));
         a
     }
 
@@ -2188,7 +2188,7 @@ impl App {
         let mut act = None;
         if hovered {
             let mut bx = rx;
-            for (i, (icon, tip, a)) in Self::row_actions(v).into_iter().enumerate().rev() {
+            for (i, (icon, tip, a)) in self.row_actions(v).into_iter().enumerate().rev() {
                 let br = Rect::from_min_size(pos2(bx - 26.0, r.center().y - 13.0), vec2(26.0, 26.0));
                 if icon_at(ui, br, resp.id.with(i), icon, tip, p) {
                     act = Some(a);
@@ -2207,10 +2207,10 @@ impl App {
                     let t = since_on(&ctx, key.with("done"), !v.file_missing).unwrap_or(f32::INFINITY);
                     if t < 1.3 {
                         seg_bar(&ctx, &pt, Rect::from_min_size(pos2(rx - 160.0, r.top() + 29.0), vec2(160.0, 4.0)), v, p, key);
-                        pt.text(pos2(rx, r.top() + 15.0), Align2::RIGHT_CENTER, "完成", font(12.0), p.green.gamma_multiply(ease_out_cubic(t / 0.4)));
+                        pt.text(pos2(rx, r.top() + 15.0), Align2::RIGHT_CENTER, self.catalog.text(Label::Completed), font(12.0), p.green.gamma_multiply(ease_out_cubic(t / 0.4)));
                     } else if let Some(f) = v.finished_at {
                         let a = ease_out_cubic((t - 1.3) / 0.35);
-                        pt.text(pos2(rx, r.center().y), Align2::RIGHT_CENTER, format!("完成于 {}", when(f)), font(12.0), p.weak.gamma_multiply(a));
+                        pt.text(pos2(rx, r.center().y), Align2::RIGHT_CENTER, self.catalog.message("completed-at", &[("time", &when(f))]), font(12.0), p.weak.gamma_multiply(a));
                     }
                 }
                 _ => {}
@@ -2226,15 +2226,15 @@ impl App {
         }
         let mut menu = None;
         resp.context_menu(|ui| {
-            ui.set_width(140.0);
+            ui.set_min_width(210.0);
             let mut items: Vec<(&str, &str, Act)> = Vec::new();
             if v.status == Status::Completed && !v.file_missing {
                 items.push((ic::FILE, self.catalog.text(Label::Open), Act::Open));
                 items.push((ic::FOLDER_OPEN, self.catalog.text(Label::OpenFolder), Act::Reveal));
             } else {
-                items.extend(Self::row_actions(v).into_iter().filter(|a| !matches!(a.2, Act::Remove)));
+                items.extend(self.row_actions(v).into_iter().filter(|a| !matches!(a.2, Act::Remove)));
             }
-            items.push((ic::LINK, "复制链接", Act::CopyLink));
+            items.push((ic::LINK, self.catalog.text(Label::CopyLink), Act::CopyLink));
             items.push((ic::TRASH, self.catalog.text(Label::Delete), Act::Remove));
             ui.spacing_mut().item_spacing.y = 1.0;
             for (_, label, a) in items {
@@ -2252,7 +2252,7 @@ impl App {
     fn detail(&mut self, ui: &mut Ui, v: &TaskView, p: &Pal) {
         let ctx = ui.ctx().clone();
         let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::hover());
-        ui.painter().text(pos2(hr.left() + 16.0, hr.center().y), Align2::LEFT_CENTER, "详情", bold(12.0), p.text);
+        ui.painter().text(pos2(hr.left() + 16.0, hr.center().y), Align2::LEFT_CENTER, self.catalog.text(Label::Details), bold(12.0), p.text);
         if icon_at(ui, Rect::from_min_size(pos2(hr.right() - 34.0, hr.center().y - 12.0), vec2(24.0, 24.0)), Id::new("detail_close"), ic::X, self.catalog.text(Label::Close), p) {
             self.selected = None;
         }
@@ -2263,7 +2263,7 @@ impl App {
                 ui.add(egui::Label::new(RichText::new(m).size(12.0).color(c)).wrap());
                 if v.status == Status::Failed && v.error.is_some() {
                     ui.add_space(4.0);
-                    let l = ui.add(egui::Label::new(RichText::new("查看错误报告").size(12.0).color(p.accent)).sense(Sense::click()));
+                    let l = ui.add(egui::Label::new(RichText::new(self.catalog.text(Label::ViewErrorReport)).size(12.0).color(p.accent)).sense(Sense::click()));
                     if l.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         self.err_report = Some(v.id);
                     }
@@ -2283,39 +2283,39 @@ impl App {
                             ui.add(egui::Label::new(RichText::new(s).size(12.0).color(p.text)).truncate());
                         });
                     };
-                    k(ui, "大小");
-                    val(ui, v.size.map(bytes).unwrap_or_else(|| "未知".into()));
+                    k(ui, self.catalog.text(Label::Size));
+                    val(ui, v.size.map(bytes).unwrap_or_else(|| self.catalog.text(Label::Unknown).into()));
                     ui.end_row();
                     if v.status != Status::Completed {
-                        k(ui, "已下载");
+                        k(ui, self.catalog.text(Label::Downloaded));
                         val(ui, format!("{}   {:.1}%", bytes(v.downloaded), frac(v) * 100.0));
                         ui.end_row();
                     }
                     if v.status == Status::Running {
-                        k(ui, "速度");
+                        k(ui, self.catalog.text(Label::Speed));
                         val(ui, speed(v.speed));
                         ui.end_row();
-                        k(ui, "连接");
+                        k(ui, self.catalog.text(Label::Connections));
                         val(ui, format!("{} / {}", v.connections, v.target));
                         ui.end_row();
                     }
                     if v.avg_speed > 0.0 {
-                        k(ui, "平均速度");
+                        k(ui, self.catalog.text(Label::AverageSpeed));
                         val(ui, speed(v.avg_speed));
                         ui.end_row();
                     }
-                    k(ui, "分段");
-                    val(ui, if v.ranges { format!("支持，切分 {} 次", v.splits) } else { "不支持".into() });
+                    k(ui, self.catalog.text(Label::Segments));
+                    val(ui, if v.ranges { self.catalog.message("segments-supported", &[("count", &v.splits.to_string())]) } else { self.catalog.text(Label::Unsupported).into() });
                     ui.end_row();
                     if let Some(r) = &v.route {
-                        k(ui, "线路");
+                        k(ui, self.catalog.text(Label::Route));
                         val(ui, r.clone());
                         ui.end_row();
                     }
-                    k(ui, "添加于");
+                    k(ui, self.catalog.text(Label::AddedAt));
                     val(ui, when(v.created_at));
                     ui.end_row();
-                    k(ui, "保存到");
+                    k(ui, self.catalog.text(Label::SaveTo));
                     ui.allocate_ui_with_layout(vec2(vw, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.spacing_mut().button_padding = vec2(2.0, 0.0);
@@ -2325,11 +2325,11 @@ impl App {
                         ui.add(egui::Label::new(RichText::new(v.path.as_ref().unwrap_or(&v.dir).display().to_string()).size(12.0).color(p.text)).truncate());
                     });
                     ui.end_row();
-                    k(ui, "链接");
+                    k(ui, self.catalog.text(Label::Link));
                     ui.allocate_ui_with_layout(vec2(vw, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.spacing_mut().button_padding = vec2(2.0, 0.0);
-                        if ui.add(egui::Button::new(RichText::new(ic::COPY).font(ifont(13.0))).frame_when_inactive(false).small()).tip("复制链接").clicked() {
+                        if ui.add(egui::Button::new(RichText::new(ic::COPY).font(ifont(13.0))).frame_when_inactive(false).small()).tip(self.catalog.text(Label::CopyLink)).clicked() {
                             act = Some(Act::CopyLink);
                         }
                         ui.add(egui::Label::new(RichText::new(&v.url).size(12.0).color(p.text)).truncate()).tip(&v.url);
@@ -2341,7 +2341,7 @@ impl App {
                 }
                 if !v.host.is_empty() {
                     ui.add_space(16.0);
-                    ui.label(RichText::new("下载服务器").font(bold(12.0)).color(p.text));
+                    ui.label(RichText::new(self.catalog.text(Label::DownloadServer)).font(bold(12.0)).color(p.text));
                     ui.add_space(6.0);
                     self.server_row(ui, v, p);
                 }
