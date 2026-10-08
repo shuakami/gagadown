@@ -1,3 +1,13 @@
+cli-url = 下载链接
+cli-directory = 下载目录
+cli-max-connections = 单任务最大连接数
+cli-initial = 单任务初始连接数
+cli-proxy = 代理地址（可重复指定）
+cli-direct-only = 仅使用直连
+cli-sha256 = 预期的 SHA-256 校验值
+cli-port = 浏览器 API 本地端口
+cli-done = 已下载 { $size }，耗时 { $seconds } 秒，平均 { $speed }/s → { $path }
+cli-api = 浏览器 API 正在监听 127.0.0.1:{ $port }
 cli-about = GaGaDown 命令行
 cli-get = 下载一个链接后退出
 cli-serve = 不打开界面，运行下载引擎和浏览器 API

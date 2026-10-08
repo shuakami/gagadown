@@ -1,6 +1,7 @@
 //! Fluent catalogs shared by presentation layers. The download core stays locale-neutral.
 //! Static labels are resolved once and borrowed by index without locks or formatting.
-use fluent_bundle::{FluentArgs, FluentBundle, FluentResource};
+pub use fluent_bundle::FluentArgs;
+use fluent_bundle::{FluentBundle, FluentResource};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Language {
@@ -101,6 +102,14 @@ labels! {
     SyncCompleteHelp => "sync-complete-help",
     DaysSuffix => "days-suffix",
     LinkPlaceholder => "link-placeholder",
+    CliUrl => "cli-url",
+    CliDirectory => "cli-directory",
+    CliMaxConnections => "cli-max-connections",
+    CliInitial => "cli-initial",
+    CliProxy => "cli-proxy",
+    CliDirectOnly => "cli-direct-only",
+    CliSha256 => "cli-sha256",
+    CliPort => "cli-port",
     CliAbout => "cli-about",
     CliGet => "cli-get",
     CliServe => "cli-serve",

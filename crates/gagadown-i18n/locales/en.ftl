@@ -1,3 +1,13 @@
+cli-url = URL to download
+cli-directory = Download folder
+cli-max-connections = Maximum connections per task
+cli-initial = Initial connections per task
+cli-proxy = Proxy URL (repeat for multiple proxies)
+cli-direct-only = Use direct connections only
+cli-sha256 = Expected SHA-256 checksum
+cli-port = Local browser API port
+cli-done = Downloaded { $size } in { $seconds } s, average { $speed }/s → { $path }
+cli-api = Browser API listening on 127.0.0.1:{ $port }
 cli-about = GaGaDown command line
 cli-get = Download one URL and exit
 cli-serve = Run the engine with the browser API and no GUI

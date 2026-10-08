@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
-use gagadown_i18n::{Catalog, Label, Language};
+use gagadown_i18n::{Catalog, FluentArgs, Label, Language};
 use gagadown_core::{AddRequest, Engine, Status};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -73,9 +73,20 @@ async fn main() -> Result<()> {
     let command = Cli::command()
         .about(catalog.text(Label::CliAbout).to_owned())
         .mut_arg("language", |arg| arg.help(catalog.text(Label::CliLanguage).to_owned()))
-        .mut_subcommand("get", |cmd| cmd.about(catalog.text(Label::CliGet).to_owned())
-            .mut_arg("data_dir", |arg| arg.help(catalog.text(Label::CliDataDirectory).to_owned())))
-        .mut_subcommand("serve", |cmd| cmd.about(catalog.text(Label::CliServe).to_owned()))
+        .mut_subcommand("get", |mut cmd| {
+            cmd = cmd.about(catalog.text(Label::CliGet).to_owned());
+            for (id, label) in [
+                ("url", Label::CliUrl), ("dir", Label::CliDirectory),
+                ("max_connections", Label::CliMaxConnections), ("initial", Label::CliInitial),
+                ("proxy", Label::CliProxy), ("direct_only", Label::CliDirectOnly),
+                ("sha256", Label::CliSha256), ("data_dir", Label::CliDataDirectory),
+            ] {
+                cmd = cmd.mut_arg(id, |arg| arg.help(catalog.text(label).to_owned()));
+            }
+            cmd
+        })
+        .mut_subcommand("serve", |cmd| cmd.about(catalog.text(Label::CliServe).to_owned())
+            .mut_arg("port", |arg| arg.help(catalog.text(Label::CliPort).to_owned())))
         .mut_subcommand("proxies", |cmd| cmd.about(catalog.text(Label::CliProxies).to_owned()));
     let cli = Cli::from_arg_matches(&command.get_matches_from(args))?;
     match cli.cmd {
@@ -117,7 +128,12 @@ async fn main() -> Result<()> {
                 match v.status {
                     Status::Completed => {
                         let secs = t0.elapsed().as_secs_f64();
-                        eprintln!("\ndone {} in {:.2}s, avg {}/s -> {}", human(v.downloaded as f64), secs, human(v.downloaded as f64 / secs), v.path.map(|p| p.display().to_string()).unwrap_or_default());
+                        let mut args = FluentArgs::new();
+                        args.set("size", human(v.downloaded as f64));
+                        args.set("seconds", format!("{secs:.2}"));
+                        args.set("speed", human(v.downloaded as f64 / secs.max(f64::EPSILON)));
+                        args.set("path", v.path.map(|p| p.display().to_string()).unwrap_or_default());
+                        eprintln!("\n{}", catalog.format("cli-done", Some(&args)).map_err(anyhow::Error::msg)?);
                         break;
                     }
                     Status::Failed if v.next_retry_at.is_none() => {
@@ -139,7 +155,9 @@ async fn main() -> Result<()> {
         Cmd::Serve { port } => {
             let engine = Engine::new(None)?;
             let port = port.unwrap_or(engine.settings().api_port);
-            eprintln!("api on 127.0.0.1:{port}");
+            let mut args = FluentArgs::new();
+            args.set("port", port.to_string());
+            eprintln!("{}", catalog.format("cli-api", Some(&args)).map_err(anyhow::Error::msg)?);
             gagadown_core::api::serve(engine, port).await?;
         }
         Cmd::Proxies => {

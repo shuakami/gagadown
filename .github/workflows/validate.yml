@@ -35,6 +35,13 @@ jobs:
           key: validation-linux
       - run: cargo test -p gagadown-core -p gagadown-i18n
       - run: cargo build --release -p gagadown-app -p gagadown-cli
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Bounded CLI runtime regression
+        env:
+          GAGADOWN_CLI: ./target/release/gagadown-cli
+        run: node --test tools/test-cli-runtime.cjs
       - name: Isolated desktop runtime smoke test
         run: |
           export XDG_CONFIG_HOME="$RUNNER_TEMP/gagadown-smoke/config"
