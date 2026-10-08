@@ -1108,13 +1108,13 @@ mod win {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    pub fn tray(ctx: eframe::egui::Context, rgba: Vec<u8>, quit: Arc<AtomicBool>, hidden: Arc<AtomicBool>) -> Option<Box<dyn std::any::Any>> {
+    pub fn tray(ctx: eframe::egui::Context, rgba: Vec<u8>, quit: Arc<AtomicBool>, hidden: Arc<AtomicBool>, catalog: &gagadown_i18n::Catalog) -> Option<Box<dyn std::any::Any>> {
         use eframe::egui::ViewportCommand as V;
         use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
         use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
         let menu = Menu::new();
-        let show = MenuItem::new("显示主界面", true, None);
-        let exit = MenuItem::new("退出", true, None);
+        let show = MenuItem::new(catalog.text(gagadown_i18n::Label::ShowWindow), true, None);
+        let exit = MenuItem::new(catalog.text(gagadown_i18n::Label::Exit), true, None);
         menu.append_items(&[&show, &PredefinedMenuItem::separator(), &exit]).ok()?;
         let (show_id, exit_id) = (show.id().clone(), exit.id().clone());
         let tray = TrayIconBuilder::new()
@@ -1479,6 +1479,7 @@ mod win {
         _rgba: Vec<u8>,
         _quit: std::sync::Arc<std::sync::atomic::AtomicBool>,
         _hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        _catalog: &gagadown_i18n::Catalog,
     ) -> Option<Box<dyn std::any::Any>> {
         None
     }
@@ -2228,13 +2229,13 @@ impl App {
             ui.set_width(140.0);
             let mut items: Vec<(&str, &str, Act)> = Vec::new();
             if v.status == Status::Completed && !v.file_missing {
-                items.push((ic::FILE, "打开", Act::Open));
-                items.push((ic::FOLDER_OPEN, "打开所在文件夹", Act::Reveal));
+                items.push((ic::FILE, self.catalog.text(Label::Open), Act::Open));
+                items.push((ic::FOLDER_OPEN, self.catalog.text(Label::OpenFolder), Act::Reveal));
             } else {
                 items.extend(Self::row_actions(v).into_iter().filter(|a| !matches!(a.2, Act::Remove)));
             }
             items.push((ic::LINK, "复制链接", Act::CopyLink));
-            items.push((ic::TRASH, "删除", Act::Remove));
+            items.push((ic::TRASH, self.catalog.text(Label::Delete), Act::Remove));
             ui.spacing_mut().item_spacing.y = 1.0;
             for (_, label, a) in items {
                 if menu_item(ui, label, matches!(a, Act::Remove), p) {
@@ -2252,7 +2253,7 @@ impl App {
         let ctx = ui.ctx().clone();
         let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::hover());
         ui.painter().text(pos2(hr.left() + 16.0, hr.center().y), Align2::LEFT_CENTER, "详情", bold(12.0), p.text);
-        if icon_at(ui, Rect::from_min_size(pos2(hr.right() - 34.0, hr.center().y - 12.0), vec2(24.0, 24.0)), Id::new("detail_close"), ic::X, "关闭", p) {
+        if icon_at(ui, Rect::from_min_size(pos2(hr.right() - 34.0, hr.center().y - 12.0), vec2(24.0, 24.0)), Id::new("detail_close"), ic::X, self.catalog.text(Label::Close), p) {
             self.selected = None;
         }
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
@@ -2318,7 +2319,7 @@ impl App {
                     ui.allocate_ui_with_layout(vec2(vw, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.spacing_mut().button_padding = vec2(2.0, 0.0);
-                        if ui.add(egui::Button::new(RichText::new(ic::FOLDER_OPEN).font(ifont(13.0))).frame_when_inactive(false).small()).tip("打开所在文件夹").clicked() {
+                        if ui.add(egui::Button::new(RichText::new(ic::FOLDER_OPEN).font(ifont(13.0))).frame_when_inactive(false).small()).tip(self.catalog.text(Label::OpenFolder)).clicked() {
                             act = Some(Act::Reveal);
                         }
                         ui.add(egui::Label::new(RichText::new(v.path.as_ref().unwrap_or(&v.dir).display().to_string()).size(12.0).color(p.text)).truncate());
@@ -2357,7 +2358,7 @@ impl App {
         let ctx = ui.ctx().clone();
         let actions: &[(&str, &str)] = if self.deleted.is_empty() { &[] } else { &[(ic::BROOM, "清空回收站")] };
         ui.add_space(6.0);
-        let (_, _, btns) = header(ui, "回收站", Some(self.deleted.len()), None, actions, p);
+        let (_, _, btns) = header(ui, self.catalog.text(Label::Trash), Some(self.deleted.len()), None, actions, p);
         if let Some(b) = btns.first() {
             let mut pick = None;
             egui::Popup::menu(b).show(|ui| {
@@ -2422,7 +2423,7 @@ impl App {
     }
 
     fn extension_page(&mut self, ui: &mut Ui, p: &Pal) {
-        Self::page_title(ui, "浏览器插件", None, &[], p);
+        Self::page_title(ui, self.catalog.text(Label::BrowserExtension), None, &[], p);
         let ctx = ui.ctx().clone();
         ctx.request_repaint_after(Duration::from_millis(500));
         let (mut act, mut copy, mut open, mut tab, mut copy_page) = (None, false, false, None, None);
@@ -2827,8 +2828,15 @@ impl App {
         });
 
         let language = Language::from_preference(&self.draft.language);
-        if let Err(error) = self.catalog.switch(language) {
-            self.toast(error, true);
+        if self.catalog.language() != language {
+            match self.catalog.switch(language) {
+                Ok(()) => {
+                    // Rebuild the native menu so it switches with the GUI.
+                    self.tray = None;
+                    self.tray = win::tray(ctx.clone(), tray_rgba(), self.quit.clone(), self.hidden.clone(), &self.catalog);
+                }
+                Err(error) => self.toast(error, true),
+            }
         }
         let mut cand = self.draft.clone();
         cand.proxy.proxies = self.draft_proxies.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
@@ -2873,7 +2881,7 @@ impl App {
             ui.set_opacity(a);
             ui.set_width(520.0);
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new("错误报告").font(bold(15.0)).color(p.text));
+            ui.label(RichText::new(self.catalog.text(Label::ErrorReport)).font(bold(15.0)).color(p.text));
             ui.add_space(2.0);
             ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.weak)).truncate());
             ui.add_space(12.0);
@@ -2887,14 +2895,14 @@ impl App {
             });
             ui.add_space(16.0);
             let (row, _) = ui.allocate_exact_size(vec2(520.0, 30.0), Sense::hover());
-            let copy = Rect::from_min_size(pos2(row.right() - 88.0, row.top()), vec2(88.0, 30.0));
+            let copy = Rect::from_min_size(pos2(row.right() - 110.0, row.top()), vec2(110.0, 30.0));
             let shut = Rect::from_min_size(pos2(copy.left() - 84.0, row.top()), vec2(76.0, 30.0));
             let cr = ui.interact(copy, Id::new("er-copy"), Sense::click());
             ui.painter().rect_filled(copy, CornerRadius::same(6), if cr.hovered() { blend(p.accent, Color32::BLACK, 0.88) } else { p.accent });
-            ui.painter().text(copy.center(), Align2::CENTER_CENTER, "复制报告", font(13.0), Color32::WHITE);
+            ui.painter().text(copy.center(), Align2::CENTER_CENTER, self.catalog.text(Label::CopyReport), font(13.0), Color32::WHITE);
             let sr = ui.interact(shut, Id::new("er-close"), Sense::click());
             ui.painter().rect_filled(shut, CornerRadius::same(6), p.text.gamma_multiply(if sr.hovered() { 0.1 } else { 0.06 }));
-            ui.painter().text(shut.center(), Align2::CENTER_CENTER, "关闭", font(13.0), p.text);
+            ui.painter().text(shut.center(), Align2::CENTER_CENTER, self.catalog.text(Label::Close), font(13.0), p.text);
             if cr.clicked() && !closing {
                 ui.ctx().copy_text(report.clone());
             }
@@ -2921,11 +2929,11 @@ impl App {
             ui.set_opacity(a);
             ui.set_width(340.0);
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new("删除任务").font(bold(15.0)).color(p.text));
+            ui.label(RichText::new(self.catalog.text(Label::DeleteTask)).font(bold(15.0)).color(p.text));
             ui.add_space(2.0);
             ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.weak)).truncate());
             ui.add_space(14.0);
-            for (mode, label) in [(RemoveMode::KeepFiles, "只删除任务，保留文件"), (RemoveMode::TrashFiles, "文件移到回收站"), (RemoveMode::DeleteFiles, "彻底删除文件")] {
+            for (mode, label) in [(RemoveMode::KeepFiles, self.catalog.text(Label::KeepFiles)), (RemoveMode::TrashFiles, self.catalog.text(Label::TrashFiles)), (RemoveMode::DeleteFiles, self.catalog.text(Label::DeleteFiles))] {
                 let (r, resp) = ui.allocate_exact_size(vec2(340.0, 34.0), Sense::click());
                 let on = self.remove_mode == mode;
                 if on {
@@ -2949,10 +2957,10 @@ impl App {
             let okr = ui.interact(ok, Id::new("rm-ok"), Sense::click());
             let base = if danger { p.red } else { p.accent };
             ui.painter().rect_filled(ok, CornerRadius::same(6), if okr.hovered() { blend(base, Color32::BLACK, 0.88) } else { base });
-            ui.painter().text(ok.center(), Align2::CENTER_CENTER, "删除", font(13.0), Color32::WHITE);
+            ui.painter().text(ok.center(), Align2::CENTER_CENTER, self.catalog.text(Label::Delete), font(13.0), Color32::WHITE);
             let cr = ui.interact(cancel, Id::new("rm-cancel"), Sense::click());
             ui.painter().rect_filled(cancel, CornerRadius::same(6), p.text.gamma_multiply(if cr.hovered() { 0.1 } else { 0.06 }));
-            ui.painter().text(cancel.center(), Align2::CENTER_CENTER, "取消", font(13.0), p.text);
+            ui.painter().text(cancel.center(), Align2::CENTER_CENTER, self.catalog.text(Label::Cancel), font(13.0), p.text);
             if !closing && (okr.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter))) {
                 let e = self.engine.clone();
                 let mode = self.remove_mode;
@@ -3132,7 +3140,7 @@ impl App {
             let pt = ui.painter().clone();
             self.paint_file(&ctx, &pt, pos2(b.left() + 18.0, b.top() + 18.0), 36.0, &pop.name, None, p, 1.0);
             text_line(&pt, pos2(b.left() + 48.0, b.top() + 9.0), Align2::LEFT_CENTER, &pop.name, bold(14.0), p.text, b.width() - 48.0);
-            let size = pop.size.map(bytes).unwrap_or_else(|| "大小未知".into());
+            let size = pop.size.map(bytes).unwrap_or_else(|| self.catalog.text(Label::UnknownSize).into());
             text_line(&pt, pos2(b.left() + 48.0, b.top() + 28.0), Align2::LEFT_CENTER, format!("{size}   {}", pop.host), font(12.0), p.weak, b.width() - 48.0);
             let by = b.top() + 56.0;
             let bar = Rect::from_min_size(pos2(b.left(), by), vec2(b.width(), 4.0));
@@ -3142,14 +3150,14 @@ impl App {
                 let k = ease_out_cubic((t / 0.5).min(1.0));
                 pt.rect_filled(bar, CornerRadius::same(2), blend(p.red, p.accent, k));
                 text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, format!("无法接管：{err}"), font(12.0), p.red, b.width());
-                text_line(&pt, pos2(b.left(), by + 40.0), Align2::LEFT_CENTER, "已交给浏览器继续下载", font(12.0), p.weak, b.width() - 90.0);
-                "关闭"
+                text_line(&pt, pos2(b.left(), by + 40.0), Align2::LEFT_CENTER, self.catalog.text(Label::BrowserContinues), font(12.0), p.weak, b.width() - 90.0);
+                self.catalog.text(Label::Close)
             } else {
                 let now = ctx.input(|i| i.time);
                 ctx.data_mut(|d| d.insert_temp(Id::new(("pend", pop.key)), now));
                 indeterminate(&pt, bar, ctx.input(|i| i.time), p.accent);
-                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, "正在连接…", font(12.0), p.weak, b.width());
-                "取消"
+                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, self.catalog.text(Label::Connecting), font(12.0), p.weak, b.width());
+                self.catalog.text(Label::Cancel)
             };
             let r = Rect::from_min_size(pos2(b.right() - 76.0, b.bottom() - 28.0), vec2(76.0, 28.0));
             if btn_at(ui, r, Id::new(("pending_btn", pop.key)), label, false, p) {
@@ -3199,7 +3207,7 @@ impl App {
                 pt.add(Shape::line(vec![m(-3.4, 0.2), m(-1.1, 2.5), m(3.5, -2.3)], Stroke::new(1.6 * badge.min(1.0), Color32::WHITE)));
             }
             text_line(&pt, pos2(b.left() + 48.0, b.top() + 9.0), Align2::LEFT_CENTER, &v.filename, bold(14.0), p.text, b.width() - 48.0);
-            let size = v.size.map(bytes).unwrap_or_else(|| "大小未知".into());
+            let size = v.size.map(bytes).unwrap_or_else(|| self.catalog.text(Label::UnknownSize).into());
             text_line(&pt, pos2(b.left() + 48.0, b.top() + 28.0), Align2::LEFT_CENTER, format!("{size}   {}", v.host), font(12.0), p.weak, b.width() - 48.0);
 
             let by = b.top() + 56.0;
@@ -3217,7 +3225,7 @@ impl App {
             if ok {
                 let a = since.map_or(1.0, |t| ease_out_cubic((t - 0.35) / 0.4));
                 let y = by + 22.0 + (1.0 - a) * 6.0;
-                let r1 = text_line(&pt, pos2(b.left(), y), Align2::LEFT_CENTER, "下载完成", font(12.5), p.green.gamma_multiply(a), 120.0);
+                let r1 = text_line(&pt, pos2(b.left(), y), Align2::LEFT_CENTER, self.catalog.text(Label::DownloadComplete), font(12.5), p.green.gamma_multiply(a), 120.0);
                 let mut extra = Vec::new();
                 if let Some(fin) = v.finished_at {
                     extra.push(format!("用时 {}", dur(fin.saturating_sub(v.created_at).max(1))));
@@ -3240,12 +3248,12 @@ impl App {
             }
 
             let buttons: Vec<(&str, bool, Option<Act>)> = match v.status {
-                Status::Completed if !v.file_missing => vec![("打开所在文件夹", false, Some(Act::Reveal)), ("打开", true, Some(Act::Open))],
-                Status::Running | Status::Queued => vec![("取消", false, None), ("暂停", true, Some(Act::Pause))],
-                Status::Paused => vec![("取消", false, None), ("继续", true, Some(Act::Resume))],
-                _ => vec![("取消", false, None), ("重试", true, Some(Act::Resume))],
+                Status::Completed if !v.file_missing => vec![(self.catalog.text(Label::OpenFolder), false, Some(Act::Reveal)), (self.catalog.text(Label::Open), true, Some(Act::Open))],
+                Status::Running | Status::Queued => vec![(self.catalog.text(Label::Cancel), false, None), (self.catalog.text(Label::Pause), true, Some(Act::Pause))],
+                Status::Paused => vec![(self.catalog.text(Label::Cancel), false, None), (self.catalog.text(Label::Resume), true, Some(Act::Resume))],
+                _ => vec![(self.catalog.text(Label::Cancel), false, None), (self.catalog.text(Label::Retry), true, Some(Act::Resume))],
             };
-            let show = "在主界面中显示";
+            let show = self.catalog.text(Label::ShowWindow);
             let sw = pt.layout_no_wrap(show.to_string(), font(12.5), p.text).size().x + 28.0;
             let sr = Rect::from_min_size(pos2(b.left(), b.bottom() - 28.0), vec2(sw, 28.0));
             if btn_at(ui, sr, Id::new(("popup_show", v.id)), show, false, p) {
@@ -3470,7 +3478,7 @@ fn main() -> eframe::Result {
             let catalog = Catalog::new(Language::from_preference(&engine.settings().language))
                 .map_err(std::io::Error::other)?;
             let mut app = App::new(rt, engine.clone(), api_error, icon, accent, catalog);
-            app.tray = win::tray(cc.egui_ctx.clone(), tray_rgba(), app.quit.clone(), app.hidden.clone());
+            app.tray = win::tray(cc.egui_ctx.clone(), tray_rgba(), app.quit.clone(), app.hidden.clone(), &app.catalog);
             app.hidden.store(silent, Ordering::SeqCst);
             let _ = unpack_extension(engine.data_dir());
             // Keep the UI pass running while minimized or in the tray so hand-off popups still open.
