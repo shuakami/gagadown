@@ -18,6 +18,8 @@ pub enum ErrorKind {
     Cancelled,
     /// The server answered with a web page instead of a file.
     NotDownload,
+    /// Another GaGaDown process already owns the data directory.
+    AlreadyRunning,
     Other,
 }
 
@@ -55,6 +57,7 @@ impl ErrorKind {
             ErrorKind::Io => "文件读写错误",
             ErrorKind::Cancelled => "已取消",
             ErrorKind::NotDownload => "不是下载链接",
+            ErrorKind::AlreadyRunning => "GaGaDown 已在运行",
             ErrorKind::Other => "未知错误",
         }
     }

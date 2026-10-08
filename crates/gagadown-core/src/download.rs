@@ -87,6 +87,22 @@ pub struct Outcome {
     pub size: u64,
 }
 
+#[cfg(windows)]
+fn set_sparse(f: &File) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
+    let mut ret = 0u32;
+    // SAFETY: valid open handle; FSCTL_SET_SPARSE without an input buffer sets the flag.
+    let ok = unsafe { DeviceIoControl(f.as_raw_handle() as _, FSCTL_SET_SPARSE, std::ptr::null(), 0, std::ptr::null_mut(), 0, &mut ret, std::ptr::null_mut()) };
+    if ok == 0 {
+        tracing::warn!("FSCTL_SET_SPARSE failed: {}", std::io::Error::last_os_error());
+    }
+}
+
+#[cfg(not(windows))]
+fn set_sparse(_: &File) {}
+
 fn write_all_at(f: &File, mut buf: &[u8], mut off: u64) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -317,11 +333,17 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
     let allocation_size = info.size;
     let file = tokio::task::spawn_blocking(move || -> std::io::Result<File> {
         let file = std::fs::OpenOptions::new().create(true).read(true).write(true).truncate(fresh).open(&part_for_open)?;
+        if fresh {
+            set_sparse(&file);
+        }
         if let Some(size) = allocation_size {
             if file.metadata()?.len() != size && ranges {
                 file.set_len(size)?;
             }
-            if fresh && ranges && size > 0 {
+            // On NTFS a write past the valid data length zero-fills everything before it,
+            // so a segment near the end of a 90 GB file blocks for minutes and writes 90 GB.
+            // Sparse files skip that; reserving the space would bring it back.
+            if fresh && ranges && size > 0 && cfg!(not(windows)) {
                 fs4::FileExt::allocate(&file, size)?;
             }
         }

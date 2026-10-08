@@ -3317,6 +3317,12 @@ impl eframe::App for App {
         self.remove_modal(&ctx, &p);
         self.error_modal(&ctx, &p);
         self.show_toasts(&ctx, &p);
+        if self.engine.take_show_request() {
+            self.hidden.store(false, Ordering::SeqCst);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
         self.popups(&ctx, &p);
         resize_edges(&ctx, full);
         let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued)) || self.engine.is_detecting();
@@ -3370,6 +3376,16 @@ fn main() -> eframe::Result {
     };
     let engine = match engine {
         Ok(e) => e,
+        Err(e) if e.kind == gagadown_core::error::ErrorKind::AlreadyRunning => {
+            let port = std::fs::read(gagadown_core::engine::default_data_dir().join("settings.json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                .and_then(|v| v.get("api_port")?.as_u64())
+                .unwrap_or(18765);
+            let url = format!("http://127.0.0.1:{port}/api/show");
+            let _ = rt.block_on(async { reqwest::Client::new().post(url).timeout(Duration::from_secs(3)).send().await });
+            std::process::exit(0);
+        }
         Err(e) => {
             let _ = rfd::MessageDialog::new().set_title("GaGaDown").set_description(format!("{e}")).show();
             std::process::exit(1);

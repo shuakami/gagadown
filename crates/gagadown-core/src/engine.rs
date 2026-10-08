@@ -118,6 +118,7 @@ pub struct Inner {
     pub data_dir: PathBuf,
     // Hold for the entire engine lifetime, including background workers.
     _instance_lock: std::fs::File,
+    show_requested: std::sync::atomic::AtomicBool,
     pub tasks: RwLock<Vec<Arc<TaskEntry>>>,
     pub deleted: Mutex<Vec<DeletedRecord>>,
     pub routes: RouteManager,
@@ -255,7 +256,7 @@ impl Engine {
             .create(true).truncate(false).read(true).write(true)
             .open(data_dir.join("engine.lock"))?;
         fs4::FileExt::try_lock(&instance_lock)
-            .map_err(|e| DlError::new(ErrorKind::Io, format!("此任务目录已由另一个 GagaDown 实例使用，请使用已运行的窗口：{e}")))?;
+            .map_err(|e| DlError::new(ErrorKind::AlreadyRunning, format!("GaGaDown 已在运行：{e}")))?;
         let settings: Settings = read_json::<Settings>(&data_dir.join("settings.json")).unwrap_or_default().sanitized();
         let state: State = read_json(&data_dir.join("state.json")).unwrap_or_default();
         let hosts: HashMap<String, HostStat> = read_json(&data_dir.join("hosts.json")).unwrap_or_default();
@@ -280,6 +281,7 @@ impl Engine {
             settings: RwLock::new(settings),
             data_dir,
             _instance_lock: instance_lock,
+            show_requested: std::sync::atomic::AtomicBool::new(false),
             tasks: RwLock::new(tasks),
             deleted: Mutex::new(state.deleted),
             routes,
@@ -374,6 +376,15 @@ impl Engine {
         if let Some(w) = self.inner.waker.read().clone() {
             w();
         }
+    }
+
+    /// A second launch asks the running instance to bring its window forward.
+    pub fn request_show(&self) {
+        self.inner.show_requested.store(true, Ordering::SeqCst);
+    }
+
+    pub fn take_show_request(&self) -> bool {
+        self.inner.show_requested.swap(false, Ordering::SeqCst)
     }
 
     pub fn take_popups(&self) -> Vec<PopupEvent> {

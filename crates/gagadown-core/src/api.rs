@@ -190,6 +190,11 @@ async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
     }
 }
 
+async fn show(State(e): State<Engine>) -> StatusCode {
+    e.request_show();
+    StatusCode::NO_CONTENT
+}
+
 async fn tasks(State(e): State<Engine>) -> impl IntoResponse {
     let v: Vec<_> = e
         .views(0)
@@ -220,6 +225,7 @@ pub fn router(engine: Engine) -> Router {
     Router::new()
         .route("/api/ping", get(ping))
         .route("/api/add", post(add))
+        .route("/api/show", post(show))
         .route("/api/tasks", get(tasks))
         .layer(middleware::from_fn(guard))
         .layer(cors)
