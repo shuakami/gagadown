@@ -375,7 +375,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
         }
         // Open as many connections as the file can use right away; slow start takes it from there.
         let by_size = ((size / (512 * 1024)) as usize).max(1);
-        let fresh_start = by_size.min(settings.initial_connections.max(32));
+        let fresh_start = by_size.min(settings.initial_connections.max(1));
         let start = if learned.best_conns > 0 { learned.best_conns.max(fresh_start.min(settings.initial_connections)) } else { fresh_start }.min(cap);
         sh.target.store(start.max(1), Ordering::Relaxed);
         sh.single.store(false, Ordering::Relaxed);
@@ -483,7 +483,15 @@ impl Controller {
             self.best_target = cur;
         }
         if self.slow_start {
-            if self.last == 0.0 || speed > self.last * 1.08 {
+            // No data yet is not evidence that more connections will help.
+            if speed <= 0.0 {
+                return cur;
+            }
+            if self.last == 0.0 {
+                self.last = speed;
+                return cur;
+            }
+            if speed > self.last * 1.08 {
                 self.last = speed;
                 return (cur * 2).min(self.cap);
             }
@@ -597,7 +605,9 @@ async fn segmented(ctx: Arc<Ctx>, cap: usize, host: String) -> DlResult<()> {
         }
 
         // 2 s control window.
-        let window = if ctl.slow_start { Duration::from_millis(500) } else { Duration::from_secs(2) };
+        // Throughput is sampled once per second. A 500ms control window
+        // alternates zero/partial samples and ramps up before data arrives.
+        let window = Duration::from_secs(2);
         if window_start.elapsed() >= window {
             let speed = window_bytes as f64 / window_start.elapsed().as_secs_f64();
             window_bytes = 0;

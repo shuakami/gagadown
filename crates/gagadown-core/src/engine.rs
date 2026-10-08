@@ -116,6 +116,8 @@ pub struct CacheReport {
 pub struct Inner {
     pub settings: RwLock<Settings>,
     pub data_dir: PathBuf,
+    // Hold for the entire engine lifetime, including background workers.
+    _instance_lock: std::fs::File,
     pub tasks: RwLock<Vec<Arc<TaskEntry>>>,
     pub deleted: Mutex<Vec<DeletedRecord>>,
     pub routes: RouteManager,
@@ -247,6 +249,13 @@ impl Engine {
     pub fn new(data_dir: Option<PathBuf>) -> DlResult<Self> {
         let data_dir = data_dir.unwrap_or_else(default_data_dir);
         std::fs::create_dir_all(&data_dir)?;
+        // Lock before reading state or spawning the scheduler. GUI autostart,
+        // manual launches and CLI serve must never own the same tasks twice.
+        let instance_lock = std::fs::OpenOptions::new()
+            .create(true).truncate(false).read(true).write(true)
+            .open(data_dir.join("engine.lock"))?;
+        fs4::FileExt::try_lock(&instance_lock)
+            .map_err(|e| DlError::new(ErrorKind::Io, format!("此任务目录已由另一个 GagaDown 实例使用，请使用已运行的窗口：{e}")))?;
         let settings: Settings = read_json::<Settings>(&data_dir.join("settings.json")).unwrap_or_default().sanitized();
         let state: State = read_json(&data_dir.join("state.json")).unwrap_or_default();
         let hosts: HashMap<String, HostStat> = read_json(&data_dir.join("hosts.json")).unwrap_or_default();
@@ -270,6 +279,7 @@ impl Engine {
             budget_size: Mutex::new(total),
             settings: RwLock::new(settings),
             data_dir,
+            _instance_lock: instance_lock,
             tasks: RwLock::new(tasks),
             deleted: Mutex::new(state.deleted),
             routes,
