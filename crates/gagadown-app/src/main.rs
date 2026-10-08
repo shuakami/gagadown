@@ -1691,7 +1691,7 @@ impl App {
             None => {
                 ctx.copy_text(dir.display().to_string());
                 open_path(&dir);
-                self.toast("插件文件夹路径已复制", false);
+                self.toast(self.catalog.text(Label::ExtensionPathCopied).to_owned(), false);
             }
         }
     }
@@ -1816,7 +1816,7 @@ impl App {
             Act::Reveal => reveal(v.path.as_deref().unwrap_or(&v.dir)),
             Act::CopyLink => {
                 ctx.copy_text(v.url.clone());
-                self.toast("链接已复制", false);
+                self.toast(self.catalog.text(Label::LinkCopied).to_owned(), false);
             }
             Act::Remove => self.removing = Some(id),
             Act::ErrorInfo => self.err_report = Some(id),
@@ -2449,15 +2449,15 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let w = ui.available_width().min(680.0);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装插件之后，下载就放心交给 GaGaDown 吧！", font(12.5), p.weak, w);
+                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, self.catalog.text(Label::ExtensionIntro), font(12.5), p.weak, w);
                 ui.add_space(10.0);
                 let Some(b) = browsers.get(sel) else {
                     let (r, _) = ui.allocate_exact_size(vec2(w, 64.0), Sense::hover());
                     let pt = ui.painter().clone();
                     pt.rect(r, CornerRadius::same(8), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
-                    text_line(&pt, pos2(r.left() + 16.0, r.center().y), Align2::LEFT_CENTER, "没有找到 Chrome 或 Edge", font(13.5), p.text, w - 160.0);
+                    text_line(&pt, pos2(r.left() + 16.0, r.center().y), Align2::LEFT_CENTER, self.catalog.text(Label::BrowserNotFound), font(13.5), p.text, w - 160.0);
                     let br = Rect::from_min_size(pos2(r.right() - 130.0, r.center().y - 15.0), vec2(114.0, 30.0));
-                    if btn_at(ui, br, Id::new("ext-folder"), "打开插件文件夹", false, p) {
+                    if btn_at(ui, br, Id::new("ext-folder"), self.catalog.text(Label::OpenExtensionFolder), false, p) {
                         act = Some(usize::MAX);
                     }
                     return;
@@ -2497,25 +2497,25 @@ impl App {
                 icon_at(&pt, sel, pos2(r.left() + 36.0, r.center().y), 40.0, 1.0);
                 let tx = r.left() + 68.0;
                 text_line(&pt, pos2(tx, r.center().y - 10.0), Align2::LEFT_CENTER, b.name, bold(15.0), p.text, w - 200.0);
-                let (st, sc) = if on { ("已连接", p.green) } else { ("未连接", p.weak) };
+                let (st, sc) = if on { (self.catalog.text(Label::Connected), p.green) } else { (self.catalog.text(Label::Disconnected), p.weak) };
                 text_line(&pt, pos2(tx, r.center().y + 11.0), Align2::LEFT_CENTER, st, font(12.0), sc, 200.0);
                 let br = Rect::from_min_size(pos2(r.right() - 112.0, r.center().y - 15.0), vec2(96.0, 30.0));
-                if btn_at(ui, br, Id::new(("ext-install", sel)), if on { "重新安装" } else { "安装插件" }, !on, p) {
+                if btn_at(ui, br, Id::new(("ext-install", sel)), if on { self.catalog.text(Label::Reinstall) } else { self.catalog.text(Label::InstallExtension) }, !on, p) {
                     act = Some(sel);
                 }
 
                 let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载已解压的扩展程序") };
                 ui.add_space(24.0);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装步骤", bold(13.5), p.text, w);
+                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, self.catalog.text(Label::InstallationSteps), bold(13.5), p.text, w);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "点“安装插件”会打开浏览器，并复制好扩展页地址", font(12.0), p.weak, w);
+                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, self.catalog.text(Label::InstallExplanation), font(12.0), p.weak, w);
                 ui.add_space(8.0);
                 let steps = [
                     format!("在浏览器地址栏粘贴 {} 并回车", b.page),
                     format!("在扩展页打开“{dev}”开关"),
                     format!("点击“{load}”"),
-                    "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”".to_string(),
+                    self.catalog.text(Label::ExtensionSelectFolder).to_owned(),
                 ];
                 let ind = 30.0;
                 for (n, s) in steps.iter().enumerate() {
@@ -2528,7 +2528,7 @@ impl App {
                     text_line(pt, pos2(r.left() + ind, r.center().y), Align2::LEFT_CENTER, s, font(13.0), p.text, tw);
                     if n == 0 {
                         let cb = Rect::from_min_size(pos2(r.right() - 58.0, r.center().y - 14.0), vec2(58.0, 28.0));
-                        if btn_at(ui, cb, Id::new("ext-copy-page"), "复制", false, p) {
+                        if btn_at(ui, cb, Id::new("ext-copy-page"), self.catalog.text(Label::Copy), false, p) {
                             copy_page = Some(b.page);
                         }
                     }
@@ -2540,8 +2540,8 @@ impl App {
                 let ob = Rect::from_min_size(pos2(r.right() - 98.0, r.top() + 4.0), vec2(94.0, 28.0));
                 let cb = Rect::from_min_size(pos2(ob.left() - 62.0, r.top() + 4.0), vec2(58.0, 28.0));
                 text_line(ui.painter(), pos2(r.left() + 12.0, r.center().y), Align2::LEFT_CENTER, &path_s, FontId::monospace(11.5), p.text, cb.left() - r.left() - 24.0);
-                copy = btn_at(ui, cb, Id::new("ext-copy"), "复制", false, p);
-                open = btn_at(ui, ob, Id::new("ext-open"), "打开文件夹", false, p);
+                copy = btn_at(ui, cb, Id::new("ext-copy"), self.catalog.text(Label::Copy), false, p);
+                open = btn_at(ui, ob, Id::new("ext-open"), self.catalog.text(Label::OpenDirectory), false, p);
                 if since.is_none() {
                     return;
                 }
@@ -2550,10 +2550,10 @@ impl App {
                 let x0 = row.left() + ind;
                 if linked {
                     ui.painter().text(pos2(x0, row.center().y), Align2::LEFT_CENTER, ic::CHECK_CIRCLE, ifont(15.0), p.green);
-                    text_line(ui.painter(), pos2(x0 + 22.0, row.center().y), Align2::LEFT_CENTER, "安装成功，插件已连接", font(13.0), p.green, w - ind - 30.0);
+                    text_line(ui.painter(), pos2(x0 + 22.0, row.center().y), Align2::LEFT_CENTER, self.catalog.text(Label::ExtensionConnected), font(13.0), p.green, w - ind - 30.0);
                 } else {
                     ui.put(Rect::from_center_size(pos2(x0 + 7.0, row.center().y), vec2(14.0, 14.0)), egui::Spinner::new().size(14.0).color(p.weak));
-                    text_line(ui.painter(), pos2(x0 + 22.0, row.center().y), Align2::LEFT_CENTER, "等待插件连接…", font(12.5), p.weak, w - ind - 30.0);
+                    text_line(ui.painter(), pos2(x0 + 22.0, row.center().y), Align2::LEFT_CENTER, self.catalog.text(Label::ExtensionWaiting), font(12.5), p.weak, w - ind - 30.0);
                 }
             });
         });
@@ -2565,11 +2565,11 @@ impl App {
         }
         if copy {
             ctx.copy_text(path_s);
-            self.toast("路径已复制", false);
+            self.toast(self.catalog.text(Label::PathCopied).to_owned(), false);
         }
         if let Some(u) = copy_page {
             ctx.copy_text(u.to_string());
-            self.toast("地址已复制", false);
+            self.toast(self.catalog.text(Label::AddressCopied).to_owned(), false);
         }
         if open {
             let _ = unpack_extension(self.engine.data_dir());
