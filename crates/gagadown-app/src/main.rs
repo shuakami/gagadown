@@ -158,7 +158,7 @@ struct App {
     cache: Option<CacheReport>,
     toasts: Vec<(Instant, String, bool)>,
     handoff_fails: Vec<Handoff>,
-    api_error: Arc<Mutex<Option<String>>>,
+    api_error: Arc<Mutex<Option<(u16, String)>> >,
     popups: Vec<Pop>,
     dismissed: std::collections::HashSet<Uuid>,
     tex: Option<egui::TextureHandle>,
@@ -618,6 +618,31 @@ fn of(v: &TaskView) -> String {
     }
 }
 
+fn error_summary(error: &gagadown_core::task::TaskError, catalog: &Catalog) -> String {
+    use gagadown_core::error::ErrorKind;
+    let label = match error.kind {
+        ErrorKind::Network => Label::ErrorNetwork,
+        ErrorKind::Timeout => Label::ErrorTimeout,
+        ErrorKind::Tls => Label::ErrorTls,
+        ErrorKind::ServerBusy => Label::ErrorServerBusy,
+        ErrorKind::ServerError => Label::ErrorServer,
+        ErrorKind::Auth => Label::ErrorAuth,
+        ErrorKind::NotFound => Label::ErrorNotFound,
+        ErrorKind::RangeUnsupported => Label::ErrorRange,
+        ErrorKind::ResourceChanged => Label::ErrorChanged,
+        ErrorKind::DiskFull => Label::ErrorDiskFull,
+        ErrorKind::Io => Label::ErrorIo,
+        ErrorKind::Cancelled => Label::ErrorCancelled,
+        ErrorKind::NotDownload => Label::ErrorNotDownload,
+        ErrorKind::Other => Label::ErrorOther,
+    };
+    let text = catalog.text(label);
+    match error.status {
+        Some(status) => format!("{text} (HTTP {status})"),
+        None => text.to_owned(),
+    }
+}
+
 fn meta_line(v: &TaskView, p: &Pal, catalog: &Catalog) -> (String, Color32) {
     match v.status {
         Status::Queued if v.downloaded > 0 => (format!("{}   {}", catalog.text(Label::Queued), of(v)), p.weak),
@@ -645,7 +670,7 @@ fn meta_line(v: &TaskView, p: &Pal, catalog: &Catalog) -> (String, Color32) {
         }
         Status::Failed => {
             let mut s = match &v.error {
-                Some(e) => e.summary(),
+                Some(e) => error_summary(e, catalog),
                 None => catalog.text(Label::Failed).into(),
             };
             if let Some(t) = v.next_retry_at {
@@ -1620,7 +1645,7 @@ impl App {
         }
     }
 
-    fn new(rt: tokio::runtime::Runtime, engine: Engine, api_error: Arc<Mutex<Option<String>>>, icon: Arc<egui::IconData>, accent: Color32, catalog: Catalog) -> Self {
+    fn new(rt: tokio::runtime::Runtime, engine: Engine, api_error: Arc<Mutex<Option<(u16, String)>>>, icon: Arc<egui::IconData>, accent: Color32, catalog: Catalog) -> Self {
         let draft = engine.settings();
         let draft_proxies = draft.proxy.proxies.join("\n");
         Self {
@@ -1713,8 +1738,8 @@ impl App {
             self.toast(n.text, false);
         }
         let api_error = self.api_error.lock().take();
-        if let Some(e) = api_error {
-            self.toast(e, true);
+        if let Some((port, error)) = api_error {
+            self.toast(self.catalog.message("api-unavailable", &[("port", &port.to_string()), ("error", &error)]), true);
         }
     }
 
@@ -2861,7 +2886,7 @@ impl App {
 
     fn error_modal(&mut self, ctx: &egui::Context, p: &Pal) {
         let Some(id) = self.err_report else { return };
-        let found = self.views.iter().find(|v| v.id == id).and_then(|v| v.error.as_ref().map(|e| (v.filename.clone(), e.summary(), error_report(v, e, &self.catalog))));
+        let found = self.views.iter().find(|v| v.id == id).and_then(|v| v.error.as_ref().map(|e| (v.filename.clone(), error_summary(e, &self.catalog), error_report(v, e, &self.catalog))));
         let Some((name, summary, report)) = found else {
             self.err_report = None;
             self.er_fade = Fade::default();
@@ -3450,7 +3475,7 @@ fn main() -> eframe::Result {
         let ae = api_error.clone();
         rt.spawn(async move {
             if let Err(x) = gagadown_core::api::serve(e, port).await {
-                *ae.lock() = Some(format!("浏览器插件端口 {port} 不可用：{x}"));
+                *ae.lock() = Some((port, x.to_string()));
             }
         });
     }

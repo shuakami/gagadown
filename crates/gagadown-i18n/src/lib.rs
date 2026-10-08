@@ -119,6 +119,20 @@ labels! {
     CliConnections => "cli-connections",
     CliSplits => "cli-splits",
     CliFailed => "cli-failed",
+    ErrorNetwork => "error-network",
+    ErrorTimeout => "error-timeout",
+    ErrorTls => "error-tls",
+    ErrorServerBusy => "error-server-busy",
+    ErrorServer => "error-server",
+    ErrorAuth => "error-auth",
+    ErrorNotFound => "error-not-found",
+    ErrorRange => "error-range",
+    ErrorChanged => "error-changed",
+    ErrorDiskFull => "error-disk-full",
+    ErrorIo => "error-io",
+    ErrorCancelled => "error-cancelled",
+    ErrorNotDownload => "error-not-download",
+    ErrorOther => "error-other",
     ReportFile => "report-file",
     ReportTime => "report-time",
     ReportType => "report-type",
@@ -316,6 +330,35 @@ mod tests {
             let catalog = Catalog::new(language).unwrap();
             assert!(catalog.format("does-not-exist", None).is_err());
             assert!(catalog.format("task-count", None).is_err());
+        }
+    }
+
+    #[test]
+    fn gui_dynamic_messages_in_both_languages() {
+        for language in [Language::Chinese, Language::English] {
+            let catalog = Catalog::new(language).unwrap();
+            for (key, values) in [
+                ("remaining-time", vec![("time", "12 s")]),
+                ("average-rate", vec![("speed", "2 MB/s")]),
+                ("retry-after", vec![("time", "12 s")]),
+                ("api-unavailable", vec![("port", "18765"), ("error", "fixture")]),
+                ("handoff-failed", vec![("error", "fixture")]),
+            ] {
+                let mut args = FluentArgs::new();
+                for (name, value) in values { args.set(name, value); }
+                assert!(!catalog.format(key, Some(&args)).unwrap().is_empty());
+                assert!(catalog.format(key, None).is_err());
+            }
+        }
+        let catalog = Catalog::new(Language::English).unwrap();
+        for (key, singular, plural) in [
+            ("connection-count", "1 connection", "2 connections"),
+            ("running-count", "1 download running", "2 downloads running"),
+            ("minutes-ago", "1 minute ago", "2 minutes ago"),
+        ] {
+            for (count, expected) in [(1, singular), (2, plural)] {
+                assert_eq!(catalog.number_message(key, count).replace(['\u{2068}', '\u{2069}'], ""), expected);
+            }
         }
     }
 
