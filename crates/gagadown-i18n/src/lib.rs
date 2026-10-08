@@ -101,6 +101,9 @@ labels! {
     SyncCompleteHelp => "sync-complete-help",
     DaysSuffix => "days-suffix",
     LinkPlaceholder => "link-placeholder",
+    About => "about",
+    OpenDataDirectory => "open-data-directory",
+    DataDirectoryHelp => "data-directory-help",
 }
 
 pub struct Catalog {
@@ -146,6 +149,13 @@ impl Catalog {
         let value = self.bundle.format_pattern(pattern, args, &mut errors);
         if errors.is_empty() { Ok(value.into_owned()) }
         else { Err(format!("Fluent message {key}: {errors:?}")) }
+    }
+
+    pub fn completed_downloads(&self, count: u32, size: &str) -> Result<String, String> {
+        let mut args = FluentArgs::new();
+        args.set("count", count);
+        args.set("size", size);
+        self.format("completed-downloads", Some(&args))
     }
 
     pub fn task_count(&self, count: u32) -> Result<String, String> {

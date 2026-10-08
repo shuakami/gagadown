@@ -1,3 +1,7 @@
+about = 关于
+open-data-directory = 打开数据目录
+data-directory-help = 设置、任务记录和日志都在这里
+completed-downloads = 已完成 { $count } 个下载，共 { $size }
 general = 常规
 download = 下载
 cache = 缓存

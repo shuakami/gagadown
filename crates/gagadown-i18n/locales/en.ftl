@@ -1,3 +1,10 @@
+about = About
+open-data-directory = Open data folder
+data-directory-help = Settings, task history and logs are stored here
+completed-downloads = { $count ->
+    [one] { $count } download completed, { $size } total
+   *[other] { $count } downloads completed, { $size } total
+    }
 general = General
 download = Download
 cache = Cache

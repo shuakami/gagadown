@@ -1543,6 +1543,15 @@ fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let read = |c: &[&str]| c.iter().find_map(|p| std::fs::read(p).ok());
     let mut base = Vec::new();
+    // Prefer the native Latin UI face; CJK follows as a glyph fallback.
+    if let Some(d) = read(&[
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    ]) {
+        fonts.font_data.insert("ui-latin".into(), Arc::new(egui::FontData::from_owned(d).tweak(sharp())));
+        base.push("ui-latin".to_owned());
+    }
     if let Some(d) = read(&[
         "C:\\Windows\\Fonts\\msyh.ttc",
         "C:\\Windows\\Fonts\\msyh.ttf",
@@ -1568,10 +1577,18 @@ fn setup_fonts(ctx: &egui::Context) {
     let mut icons = vec!["phosphor".to_string()];
     icons.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name("icons".into()), icons);
-    if !base.is_empty() {
+    if fonts.font_data.contains_key("ui") {
         fonts.families.entry(FontFamily::Monospace).or_default().push("ui".into());
     }
     let mut bold_fam: Vec<String> = Vec::new();
+    if let Some(d) = read(&[
+        "C:\\Windows\\Fonts\\seguisb.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    ]) {
+        fonts.font_data.insert("bold-latin".into(), Arc::new(egui::FontData::from_owned(d).tweak(sharp())));
+        bold_fam.push("bold-latin".to_owned());
+    }
     if let Some(d) = read(&["C:\\Windows\\Fonts\\msyhbd.ttc", "C:\\Windows\\Fonts\\msyhbd.ttf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]) {
         fonts.font_data.insert("bold".into(), Arc::new(egui::FontData::from_owned(d).tweak(sharp())));
         bold_fam.push("bold".into());
@@ -1869,18 +1886,19 @@ impl App {
     fn activity_bar(&mut self, ui: &mut Ui, p: &Pal) {
         let r = ui.max_rect();
         let active = self.views.iter().filter(|v| matches!(v.status, Status::Running | Status::Queued)).count();
-        let items = [(Page::Downloads, ic::DOWNLOAD_SIMPLE, "下载"), (Page::Trash, ic::TRASH, "回收站"), (Page::Cache, ic::HARD_DRIVES, "缓存"), (Page::Extension, ic::PUZZLE_PIECE, "浏览器插件")];
+        let items = [(Page::Downloads, ic::DOWNLOAD_SIMPLE, Label::Download), (Page::Trash, ic::TRASH, Label::Trash), (Page::Cache, ic::HARD_DRIVES, Label::Cache), (Page::Extension, ic::PUZZLE_PIECE, Label::BrowserExtension)];
         for (i, (page, icon, tip)) in items.into_iter().enumerate() {
             let ir = Rect::from_min_size(pos2(r.left(), r.top() + 2.0 + i as f32 * 48.0), vec2(r.width(), 48.0));
             self.activity_item(ui, ir, page, icon, tip, if page == Page::Downloads { active } else { 0 }, p);
         }
         let sr = Rect::from_min_size(pos2(r.left(), r.bottom() - 50.0), vec2(r.width(), 48.0));
-        self.activity_item(ui, sr, Page::Settings, ic::GEAR_SIX, "设置", 0, p);
+        self.activity_item(ui, sr, Page::Settings, ic::GEAR_SIX, Label::Settings, 0, p);
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn activity_item(&mut self, ui: &mut Ui, r: Rect, page: Page, icon: &str, tip: &str, badge: usize, p: &Pal) {
-        let resp = ui.interact(r, Id::new(("activity", tip)), Sense::click()).tip(tip);
+    fn activity_item(&mut self, ui: &mut Ui, r: Rect, page: Page, icon: &str, label: Label, badge: usize, p: &Pal) {
+        let tip = self.catalog.text(label);
+        let resp = ui.interact(r, Id::new(("activity", label as usize)), Sense::click()).tip(tip);
         let on = self.page == page;
         let pt = ui.painter();
         if on {
@@ -2621,7 +2639,7 @@ impl App {
 
     fn about(&mut self, ui: &mut Ui, p: &Pal) {
         ui.add_space(28.0);
-        ui.label(RichText::new("关于").font(bold(14.5)).color(p.text));
+        ui.label(RichText::new(self.catalog.text(Label::About)).font(bold(14.5)).color(p.text));
         ui.add_space(8.0);
         let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 150.0), Sense::hover());
@@ -2642,7 +2660,7 @@ impl App {
         let mut lx = x;
         let repo = "https://github.com/shuakami/gagadown";
         let dir = self.engine.data_dir().to_path_buf();
-        for (key, label, tip) in [("about_dir", "打开数据目录", "设置、任务记录和日志都在这里"), ("about_repo", "GitHub", repo)] {
+        for (key, label, tip) in [("about_dir", self.catalog.text(Label::OpenDataDirectory), self.catalog.text(Label::DataDirectoryHelp)), ("about_repo", "GitHub", repo)] {
             let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, label, font(12.5), p.accent, w);
             let resp = ui.interact(lr.expand(3.0), Id::new(key), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).tip(tip);
             if resp.hovered() {
@@ -2659,7 +2677,7 @@ impl App {
         }
         let done = self.views.iter().filter(|v| v.status == Status::Completed);
         let (n, total) = done.fold((0usize, 0u64), |(n, t), v| (n + 1, t + v.size.unwrap_or(0)));
-        pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, format!("已完成 {n} 个下载，共 {}", bytes(total)), font(12.0), p.weak);
+        pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, self.catalog.completed_downloads(n as u32, &bytes(total)).unwrap_or_else(|error| error), font(12.0), p.weak);
     }
 
     fn settings_page(&mut self, ui: &mut Ui, p: &Pal) {
