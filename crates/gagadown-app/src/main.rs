@@ -419,14 +419,7 @@ fn decode_png(b: &[u8]) -> Option<egui::ColorImage> {
 }
 
 fn route_info(v: &TaskView) -> (Option<String>, Option<u64>) {
-    for l in v.log.iter().rev() {
-        if let Some(rest) = l.text.strip_prefix("线路 ") {
-            if let Some((name, ms)) = rest.split_once("，响应 ") {
-                return (v.route.clone().or(Some(name.to_string())), ms.trim_end_matches(" ms").parse().ok());
-            }
-        }
-    }
-    (v.route.clone(), None)
+    (v.route.clone(), v.route_latency_ms)
 }
 
 const EXTENSION: &[(&str, &[u8])] = &[
@@ -1789,7 +1782,7 @@ impl App {
             match self.engine.add(req, None) {
                 Ok(o) if o.existed => self.toast(self.catalog.message("task-already-listed", &[("filename", &o.filename)]), false),
                 Ok(_) => added += 1,
-                Err(e) => self.toast(format!("{e}"), true),
+                Err(e) => self.toast(failure_summary(e.kind, e.status, &self.catalog), true),
             }
         }
         if added == 0 && !text.contains("://") {

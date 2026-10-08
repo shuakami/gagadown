@@ -286,6 +286,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
         r.content_type = info.content_type.clone();
         r.final_url = Some(info.final_url.clone());
         r.route = Some(route.name.clone());
+        r.route_latency_ms = Some(info.latency_ms);
         (path, part)
     };
     if changed {
@@ -675,10 +676,13 @@ fn evict_stragglers(ctx: &Ctx, dt: f64) {
 async fn failover(ctx: &Ctx) {
     let cur = ctx.sh.route.read().as_ref().map(|r| r.name.clone()).unwrap_or_default();
     let url = ctx.urls[0].clone();
-    if let Ok((r, _)) = ctx.inner.routes.resolve(&ctx.spec, &url, &ctx.ua, Some(&cur)).await {
+    if let Ok((r, info)) = ctx.inner.routes.resolve(&ctx.spec, &url, &ctx.ua, Some(&cur)).await {
         if r.name != cur {
             ctx.log(format!("线路切换 {cur} -> {}", r.name));
-            ctx.entry.with(|rec| rec.route = Some(r.name.clone()));
+            ctx.entry.with(|rec| {
+                rec.route = Some(r.name.clone());
+                rec.route_latency_ms = Some(info.latency_ms);
+            });
             *ctx.sh.route.write() = Some(r);
             ctx.sh.route_errors.store(0, Ordering::Relaxed);
         }
