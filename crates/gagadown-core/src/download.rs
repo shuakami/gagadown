@@ -310,14 +310,27 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
     }
 
     let fresh = remaining.is_none();
-    let file = std::fs::OpenOptions::new().create(true).read(true).write(true).truncate(fresh).open(&part)?;
-    if let Some(size) = info.size {
-        if file.metadata()?.len() != size && ranges {
-            file.set_len(size)?;
+    // Large preallocations can block for minutes. Keep them off Tokio's worker
+    // threads, and await their completion even after cancellation so remove()
+    // cannot unlink a file that is still being allocated.
+    let part_for_open = part.clone();
+    let allocation_size = info.size;
+    let file = tokio::task::spawn_blocking(move || -> std::io::Result<File> {
+        let file = std::fs::OpenOptions::new().create(true).read(true).write(true).truncate(fresh).open(&part_for_open)?;
+        if let Some(size) = allocation_size {
+            if file.metadata()?.len() != size && ranges {
+                file.set_len(size)?;
+            }
+            if fresh && ranges && size > 0 {
+                fs4::FileExt::allocate(&file, size)?;
+            }
         }
-        if fresh && ranges && size > 0 {
-            let _ = fs4::FileExt::allocate(&file, size);
-        }
+        Ok(file)
+    })
+    .await
+    .map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))??;
+    if sh.cancel.is_cancelled() {
+        return Err(DlError::new(ErrorKind::Cancelled, "下载已停止"));
     }
     let file = Arc::new(file);
     let validator = info.etag.clone().or(info.last_modified.clone());

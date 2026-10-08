@@ -19,6 +19,17 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p gagadown-core
+
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -107,7 +118,7 @@ jobs:
           path: dist/*
 
   release:
-    needs: [version, windows, linux]
+    needs: [version, windows, linux, test]
     runs-on: ubuntu-latest
     env:
       V: ${{ needs.version.outputs.version }}

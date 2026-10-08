@@ -35,6 +35,7 @@ pub struct RunHandle {
 pub struct TaskEntry {
     pub rec: Mutex<TaskRecord>,
     pub run: Mutex<Option<RunHandle>>,
+    operation: tokio::sync::Mutex<()>,
 }
 
 impl TaskEntry {
@@ -258,7 +259,7 @@ impl Engine {
                 if r.status == Status::Running {
                     r.status = Status::Queued;
                 }
-                Arc::new(TaskEntry { rec: Mutex::new(r), run: Mutex::new(None) })
+                Arc::new(TaskEntry { rec: Mutex::new(r), run: Mutex::new(None), operation: tokio::sync::Mutex::new(()) })
             })
             .collect();
         download::set_cache_dir(settings.cache_dir.clone());
@@ -427,6 +428,10 @@ impl Engine {
     }
 
     fn start(&self, entry: Arc<TaskEntry>) {
+        let Ok(_operation) = entry.operation.try_lock() else { return };
+        if entry.rec.lock().status != Status::Queued || entry.run.lock().is_some() {
+            return;
+        }
         let sh = Arc::new(Shared::new());
         entry.with(|r| {
             r.status = Status::Running;
@@ -435,13 +440,14 @@ impl Engine {
         let inner = self.inner.clone();
         let e = entry.clone();
         let s = sh.clone();
-        *entry.run.lock() = Some(RunHandle { shared: sh, join: None });
+        let mut run = entry.run.lock();
+        *run = Some(RunHandle { shared: sh, join: None });
         let join = self.inner.rt.spawn(async move {
             let started = std::time::Instant::now();
             let res = download::run(inner.clone(), e.clone(), s.clone()).await;
             inner.finish(&e, &s, res, started);
         });
-        if let Some(h) = entry.run.lock().as_mut() {
+        if let Some(h) = run.as_mut() {
             h.join = Some(join);
         }
     }
@@ -574,7 +580,7 @@ impl Engine {
             log: Vec::new(),
         };
         let id = rec.id;
-        let entry = Arc::new(TaskEntry { rec: Mutex::new(rec), run: Mutex::new(None) });
+        let entry = Arc::new(TaskEntry { rec: Mutex::new(rec), run: Mutex::new(None), operation: tokio::sync::Mutex::new(()) });
         // Size alone is an estimate until the real probe; the run overwrites it.
         entry.with(|r| r.size = None);
         self.inner.tasks.write().insert(0, entry);
@@ -600,6 +606,7 @@ impl Engine {
 
     pub fn resume(&self, id: Uuid) {
         let Some(t) = self.inner.find(id) else { return };
+        let Ok(operation) = t.operation.try_lock() else { return };
         t.with(|r| {
             if matches!(r.status, Status::Paused | Status::Failed) {
                 r.status = Status::Queued;
@@ -608,6 +615,7 @@ impl Engine {
                 r.auto_retries = 0;
             }
         });
+        drop(operation);
         self.schedule();
     }
 
@@ -628,7 +636,10 @@ impl Engine {
     /// Restart from zero, discarding partial data.
     pub async fn redownload(&self, id: Uuid) {
         let Some(t) = self.inner.find(id) else { return };
-        self.stop_and_wait(&t, StopReason::Pause).await;
+        let _operation = t.operation.lock().await;
+        if !self.stop_and_wait(&t, StopReason::Pause).await {
+            return;
+        }
         t.with(|r| {
             if let Some(p) = &r.path {
                 let _ = std::fs::remove_file(part_path(p));
@@ -646,7 +657,14 @@ impl Engine {
         self.schedule();
     }
 
-    async fn stop_and_wait(&self, t: &Arc<TaskEntry>, reason: StopReason) {
+    async fn stop_and_wait(&self, t: &Arc<TaskEntry>, reason: StopReason) -> bool {
+        // Prevent queued/failed tasks from restarting while their files are removed.
+        t.with(|r| {
+            if r.status != Status::Completed {
+                r.status = Status::Paused;
+            }
+            r.next_retry_at = None;
+        });
         let join = {
             let mut g = t.run.lock();
             g.as_mut().map(|h| {
@@ -655,32 +673,62 @@ impl Engine {
                 h.join.take()
             })
         };
-        if let Some(Some(j)) = join {
-            let _ = tokio::time::timeout(Duration::from_secs(10), j).await;
+        if let Some(Some(mut j)) = join {
+            // Never detach a run and then unlink its open file. Preallocation
+            // and blocking writes must finish before Windows can reclaim it.
+            if tokio::time::timeout(Duration::from_secs(10), &mut j).await.is_err() {
+                self.inner.notify("正在等待磁盘操作结束，结束后将自动继续；无需再次点击");
+                let _ = j.await;
+            }
         }
+        // Another operation may already be waiting for this run. Never unlink
+        // its files while it still owns them.
+        t.run.lock().is_none()
     }
 
     pub async fn remove(&self, id: Uuid, mode: RemoveMode) {
         let Some(t) = self.inner.find(id) else { return };
-        self.stop_and_wait(&t, StopReason::Remove).await;
-        self.inner.tasks.write().retain(|x| !Arc::ptr_eq(x, &t));
+        let _operation = t.operation.lock().await;
+        if self.inner.find(id).is_none() {
+            return;
+        }
+        if !self.stop_and_wait(&t, StopReason::Remove).await {
+            return;
+        }
         let rec = t.persistable();
-        if let Some(p) = &rec.path {
-            match mode {
-                RemoveMode::KeepFiles => {}
-                RemoveMode::TrashFiles => {
-                    if p.exists() && rec.status == Status::Completed {
-                        if trash::delete(p).is_err() {
-                            let _ = std::fs::remove_file(p);
+        let cleanup = (|| -> Result<(), String> {
+            if let Some(p) = &rec.path {
+                match mode {
+                    RemoveMode::KeepFiles => {}
+                    RemoveMode::TrashFiles => {
+                        // Incomplete downloads have only a partial file. Do not
+                        // leave it behind until the user deletes the record again.
+                        let path = if rec.status == Status::Completed { p.clone() } else { part_path(p) };
+                        if path.try_exists().map_err(|e| e.to_string())? {
+                            trash::delete(&path).map_err(|e| e.to_string())?;
+                        }
+                    }
+                    RemoveMode::DeleteFiles => {
+                        for path in [part_path(p), p.clone()] {
+                            match std::fs::remove_file(&path) {
+                                Ok(()) => {}
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                                Err(e) => return Err(format!("{}: {e}", path.display())),
+                            }
                         }
                     }
                 }
-                RemoveMode::DeleteFiles => {
-                    let _ = std::fs::remove_file(p);
-                    let _ = std::fs::remove_file(part_path(p));
-                }
             }
+            Ok(())
+        })();
+        if let Err(e) = cleanup {
+            t.log(format!("删除失败，保留任务以便重试: {e}"));
+            self.inner.notify(format!("删除失败: {e}"));
+            self.inner.dirty.store(true, Ordering::Relaxed);
+            let _ = self.save();
+            return;
         }
+        self.inner.tasks.write().retain(|x| !Arc::ptr_eq(x, &t));
         if mode != RemoveMode::DeleteFiles {
             self.inner.deleted.lock().insert(0, DeletedRecord { rec, deleted_at: now_secs(), mode });
         }
@@ -714,7 +762,7 @@ impl Engine {
             rec.status = Status::Paused;
         }
         rec.log.push(LogLine { at: now_secs(), text: "已从最近删除恢复".into() });
-        self.inner.tasks.write().insert(0, Arc::new(TaskEntry { rec: Mutex::new(rec), run: Mutex::new(None) }));
+        self.inner.tasks.write().insert(0, Arc::new(TaskEntry { rec: Mutex::new(rec), run: Mutex::new(None), operation: tokio::sync::Mutex::new(()) }));
         self.inner.dirty.store(true, Ordering::Relaxed);
         true
     }
