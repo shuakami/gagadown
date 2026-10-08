@@ -2356,7 +2356,7 @@ impl App {
 
     fn trash(&mut self, ui: &mut Ui, p: &Pal) {
         let ctx = ui.ctx().clone();
-        let actions: &[(&str, &str)] = if self.deleted.is_empty() { &[] } else { &[(ic::BROOM, "清空回收站")] };
+        let actions: &[(&str, &str)] = if self.deleted.is_empty() { &[] } else { &[(ic::BROOM, self.catalog.text(Label::EmptyTrash))] };
         ui.add_space(6.0);
         let (_, _, btns) = header(ui, self.catalog.text(Label::Trash), Some(self.deleted.len()), None, actions, p);
         if let Some(b) = btns.first() {
@@ -2365,9 +2365,9 @@ impl App {
                 ui.set_width(190.0);
                 ui.spacing_mut().item_spacing.y = 1.0;
                 for (mode, label, danger) in [
-                    (RemoveMode::KeepFiles, "只清空记录，保留文件", false),
-                    (RemoveMode::TrashFiles, "文件移到系统回收站", false),
-                    (RemoveMode::DeleteFiles, "彻底删除文件", true),
+                    (RemoveMode::KeepFiles, self.catalog.text(Label::ClearRecordsKeepFiles), false),
+                    (RemoveMode::TrashFiles, self.catalog.text(Label::TrashFiles), false),
+                    (RemoveMode::DeleteFiles, self.catalog.text(Label::DeleteFiles), true),
                 ] {
                     if menu_item(ui, label, danger, p) {
                         pick = Some(mode);
@@ -2381,7 +2381,7 @@ impl App {
             }
         }
         if self.deleted.is_empty() {
-            ui.centered_and_justified(|ui| ui.label(RichText::new("回收站是空的").color(p.weak)));
+            ui.centered_and_justified(|ui| ui.label(RichText::new(self.catalog.text(Label::TrashEmpty)).color(p.weak)));
             return;
         }
         let list = self.deleted.clone();
@@ -2398,21 +2398,21 @@ impl App {
                 text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &d.rec.filename, font(13.5), p.text, w);
                 let size = d.rec.size.map(bytes).unwrap_or_default();
                 let mode = match d.mode {
-                    RemoveMode::KeepFiles => "保留文件",
-                    RemoveMode::TrashFiles => "文件在系统回收站",
-                    RemoveMode::DeleteFiles => "文件已删除",
+                    RemoveMode::KeepFiles => self.catalog.text(Label::FilesKept),
+                    RemoveMode::TrashFiles => self.catalog.text(Label::FilesInRecycleBin),
+                    RemoveMode::DeleteFiles => self.catalog.text(Label::FilesDeleted),
                 };
-                text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, format!("{size}   {mode}   {}删除", ago(d.deleted_at)), font(12.0), p.weak, w);
+                text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, self.catalog.message("trash-item", &[("size", &size), ("mode", mode), ("time", &ago(d.deleted_at))]), font(12.0), p.weak, w);
                 if hovered {
                     let b2 = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
                     let b1 = b2.translate(vec2(-28.0, 0.0));
-                    if icon_at(ui, b1, resp.id.with("restore"), ic::ARROW_COUNTER_CLOCKWISE, "恢复", p) {
+                    if icon_at(ui, b1, resp.id.with("restore"), ic::ARROW_COUNTER_CLOCKWISE, self.catalog.text(Label::Restore), p) {
                         if !self.engine.restore(d.rec.id) {
-                            self.toast("无法恢复", true);
+                            self.toast(self.catalog.text(Label::RestoreFailed).to_owned(), true);
                         }
                         self.last_refresh = None;
                     }
-                    if icon_at(ui, b2, resp.id.with("purge"), ic::X, "彻底删除", p) {
+                    if icon_at(ui, b2, resp.id.with("purge"), ic::X, self.catalog.text(Label::Purge), p) {
                         self.engine.purge_deleted(Some(d.rec.id));
                         self.last_refresh = None;
                     }
@@ -3251,11 +3251,11 @@ impl App {
                 pt.text(pos2(b.right(), by + 22.0), Align2::RIGHT_CENTER, format!("{:.0}%", f * 100.0), font(12.0), p.weak);
             }
 
-            let buttons: Vec<(&str, bool, Option<Act>)> = match v.status {
-                Status::Completed if !v.file_missing => vec![(self.catalog.text(Label::OpenFolder), false, Some(Act::Reveal)), (self.catalog.text(Label::Open), true, Some(Act::Open))],
-                Status::Running | Status::Queued => vec![(self.catalog.text(Label::Cancel), false, None), (self.catalog.text(Label::Pause), true, Some(Act::Pause))],
-                Status::Paused => vec![(self.catalog.text(Label::Cancel), false, None), (self.catalog.text(Label::Resume), true, Some(Act::Resume))],
-                _ => vec![(self.catalog.text(Label::Cancel), false, None), (self.catalog.text(Label::Retry), true, Some(Act::Resume))],
+            let buttons: Vec<(Label, bool, Option<Act>)> = match v.status {
+                Status::Completed if !v.file_missing => vec![(Label::OpenFolder, false, Some(Act::Reveal)), (Label::Open, true, Some(Act::Open))],
+                Status::Running | Status::Queued => vec![(Label::Cancel, false, None), (Label::Pause, true, Some(Act::Pause))],
+                Status::Paused => vec![(Label::Cancel, false, None), (Label::Resume, true, Some(Act::Resume))],
+                _ => vec![(Label::Cancel, false, None), (Label::Retry, true, Some(Act::Resume))],
             };
             let show = self.catalog.text(Label::ShowWindow);
             let sw = pt.layout_no_wrap(show.to_string(), font(12.5), p.text).size().x + 28.0;
@@ -3266,6 +3266,7 @@ impl App {
             }
             let mut x = b.right();
             for (i, (label, primary, a)) in buttons.into_iter().enumerate().rev() {
+                let label = self.catalog.text(label);
                 let w = pt.layout_no_wrap(label.to_string(), font(12.5), p.text).size().x + 28.0;
                 let r = Rect::from_min_size(pos2(x - w.max(76.0), b.bottom() - 28.0), vec2(w.max(76.0), 28.0));
                 if btn_at(ui, r, Id::new(("popup_btn", v.id, i)), label, primary, p) {
