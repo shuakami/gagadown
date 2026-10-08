@@ -24,7 +24,16 @@ pub enum PopupEvent {
     Bound { key: Uuid, id: Uuid },
     Dropped { key: Uuid },
     /// Hand-off failed; the browser keeps the download. `reason` is shown to the user.
-    Failed { key: Uuid, reason: String },
+    Failed { key: Uuid, reason: HandoffReason },
+}
+
+#[derive(Clone, Debug)]
+pub enum HandoffReason {
+    BrowserStream,
+    UnsupportedScheme,
+    ProbeTimeout { seconds: u64 },
+    WebPage,
+    Download { kind: ErrorKind, status: Option<u16> },
 }
 
 pub struct RunHandle {

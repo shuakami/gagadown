@@ -68,6 +68,10 @@ running-count = { $count ->
    *[other] { $count } downloads running
     }
 queued-count = { $count } queued
+handoff-stream = This browser-generated stream has no direct download address
+handoff-scheme = Only HTTP and HTTPS download links are supported
+handoff-webpage = This address opens a web page, not a file
+handoff-timeout = The server did not respond within { $seconds } seconds
 handoff-failed = Could not take over: { $error }
 elapsed-time = Took { $time }
 connection-count = { $count ->

@@ -1,6 +1,6 @@
 //! Local HTTP API used by the browser extension. Bound to 127.0.0.1 only; requests that
 //! carry a web-page Origin are refused so random sites can't push downloads.
-use crate::engine::{Engine, PopupEvent};
+use crate::engine::{Engine, HandoffReason, PopupEvent};
 use crate::probe::filename_from_url;
 use crate::error::ErrorKind;
 use crate::request::RequestSpec;
@@ -76,7 +76,7 @@ async fn add(State(e): State<Engine>, Json(body): Json<BrowserAdd>) -> impl Into
         let key = Uuid::new_v4();
         let url = &body.req.url;
         let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
-        let filename = body.req.filename.clone().filter(|s| !s.trim().is_empty()).or_else(|| filename_from_url(url)).unwrap_or_else(|| "下载".into());
+        let filename = body.req.filename.clone().filter(|s| !s.trim().is_empty()).or_else(|| filename_from_url(url)).unwrap_or_else(|| "download".into());
         e.push_popup(PopupEvent::Pending { key, filename, size: body.req.size_hint, host });
         key
     });
@@ -101,16 +101,16 @@ fn baidu_pcs(url: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn unsupported_scheme(url: &str) -> Option<&'static str> {
+fn unsupported_scheme(url: &str) -> Option<HandoffReason> {
     let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase()).unwrap_or_default();
     match scheme.as_str() {
         "http" | "https" => None,
-        "blob" => Some("这是网页播放器生成的视频流，没有可以直接下载的文件地址"),
-        _ => Some("不支持这种链接，只能下载 http/https 地址"),
+        "blob" => Some(HandoffReason::BrowserStream),
+        _ => Some(HandoffReason::UnsupportedScheme),
     }
 }
 
-type Taken = (AddResp, Option<Uuid>, Option<String>);
+type Taken = (AddResp, Option<Uuid>, Option<HandoffReason>);
 
 /// Expected hand-back to the browser (small file, web page, …): no error shown.
 fn reject(reason: impl Into<String>, size: Option<u64>) -> Taken {
@@ -118,9 +118,9 @@ fn reject(reason: impl Into<String>, size: Option<u64>) -> Taken {
 }
 
 /// We wanted the download but could not take it; `shown` is displayed to the user.
-fn fail(reason: impl Into<String>, shown: impl Into<String>, size: Option<u64>) -> Taken {
+fn fail(reason: impl Into<String>, shown: HandoffReason, size: Option<u64>) -> Taken {
     let (r, id, _) = reject(reason, size);
-    (r, id, Some(shown.into()))
+    (r, id, Some(shown))
 }
 
 async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
@@ -158,19 +158,20 @@ async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
         }
         Ok(Err(err)) => {
             // Let the browser keep the download: it owns the session state we could not replay.
-            let (reason, shown) = match err.kind {
-                ErrorKind::Auth => ("auth", format!("服务器拒绝访问（{}）", err.message)),
-                ErrorKind::NotFound => ("not_found", format!("文件不存在（{}）", err.message)),
-                _ => ("probe_failed", err.message.clone()),
+            let reason = match err.kind {
+                ErrorKind::Auth => "auth",
+                ErrorKind::NotFound => "not_found",
+                _ => "probe_failed",
             };
+            let shown = HandoffReason::Download { kind: err.kind, status: err.status };
             return fail(format!("{reason}: {}", err.message), shown, None);
         }
-        Err(_) => return fail("probe_timeout", format!("连接超时，{} 秒内服务器没有响应", PROBE_BUDGET.as_secs()), None),
+        Err(_) => return fail("probe_timeout", HandoffReason::ProbeTimeout { seconds: PROBE_BUDGET.as_secs() }, None),
     };
     let min = e.settings().takeover_min_size;
     if crate::download::is_web_page(&probe) {
         if body.force {
-            return fail("web_page", "这个地址打开的是网页，不是文件", probe.size);
+            return fail("web_page", HandoffReason::WebPage, probe.size);
         }
         return reject("web_page", probe.size);
     }
@@ -186,7 +187,7 @@ async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
     }
     match e.add(req, Some(&probe)) {
         Ok(o) => (AddResp { accepted: true, reason: None, id: Some(o.id.to_string()), filename: Some(o.filename), size: probe.size }, Some(o.id), None),
-        Err(err) => fail(err.message.clone(), err.message, probe.size),
+        Err(err) => fail(err.message, HandoffReason::Download { kind: err.kind, status: err.status }, probe.size),
     }
 }
 
@@ -224,6 +225,33 @@ pub fn router(engine: Engine) -> Router {
         .layer(middleware::from_fn(guard))
         .layer(cors)
         .with_state(engine)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scheme_rejections_are_typed() {
+        assert!(unsupported_scheme("https://example.invalid/file").is_none());
+        assert!(unsupported_scheme("HTTP://example.invalid/file").is_none());
+        assert!(matches!(unsupported_scheme("blob:fixture"), Some(HandoffReason::BrowserStream)));
+        assert!(matches!(unsupported_scheme("ftp://example.invalid/file"), Some(HandoffReason::UnsupportedScheme)));
+    }
+
+    #[tokio::test]
+    async fn unsupported_link_returns_structured_reason_without_network() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(Some(temp.path().join("state"))).unwrap();
+        let body = BrowserAdd { req: AddRequest { url: "blob:fixture".into(), ..Default::default() }, ..Default::default() };
+        let (response, id, reason) = take(&engine, body, false).await;
+        assert!(!response.accepted);
+        assert_eq!(response.reason.as_deref(), Some("unsupported_scheme"));
+        assert!(id.is_none());
+        assert!(matches!(reason, Some(HandoffReason::BrowserStream)));
+        assert!(engine.views(0).is_empty());
+        engine.shutdown().await;
+    }
 }
 
 pub async fn serve(engine: Engine, port: u16) -> std::io::Result<()> {

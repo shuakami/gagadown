@@ -185,14 +185,14 @@ struct Pop {
     host: String,
     pos: Pos2,
     /// Hand-off failed; the browser keeps the download.
-    error: Option<String>,
+    error: Option<gagadown_core::engine::HandoffReason>,
 }
 
 #[derive(Clone)]
 struct Handoff {
     at: u64,
     name: String,
-    reason: String,
+    reason: gagadown_core::engine::HandoffReason,
 }
 
 fn proxy_label(mode: ProxyMode) -> Label {
@@ -619,8 +619,23 @@ fn of(v: &TaskView) -> String {
 }
 
 fn error_summary(error: &gagadown_core::task::TaskError, catalog: &Catalog) -> String {
+    failure_summary(error.kind, error.status, catalog)
+}
+
+fn handoff_summary(reason: &gagadown_core::engine::HandoffReason, catalog: &Catalog) -> String {
+    use gagadown_core::engine::HandoffReason;
+    match reason {
+        HandoffReason::BrowserStream => catalog.message("handoff-stream", &[]),
+        HandoffReason::UnsupportedScheme => catalog.message("handoff-scheme", &[]),
+        HandoffReason::WebPage => catalog.message("handoff-webpage", &[]),
+        HandoffReason::ProbeTimeout { seconds } => catalog.message("handoff-timeout", &[("seconds", &seconds.to_string())]),
+        HandoffReason::Download { kind, status } => failure_summary(*kind, *status, catalog),
+    }
+}
+
+fn failure_summary(kind: gagadown_core::error::ErrorKind, status: Option<u16>, catalog: &Catalog) -> String {
     use gagadown_core::error::ErrorKind;
-    let label = match error.kind {
+    let label = match kind {
         ErrorKind::Network => Label::ErrorNetwork,
         ErrorKind::Timeout => Label::ErrorTimeout,
         ErrorKind::Tls => Label::ErrorTls,
@@ -637,7 +652,7 @@ fn error_summary(error: &gagadown_core::task::TaskError, catalog: &Catalog) -> S
         ErrorKind::Other => Label::ErrorOther,
     };
     let text = catalog.text(label);
-    match error.status {
+    match status {
         Some(status) => format!("{text} (HTTP {status})"),
         None => text.to_owned(),
     }
@@ -2162,7 +2177,7 @@ impl App {
             self.paint_file(&ctx, &pt, pos2(r.left() + 30.0, r.center().y), 26.0, &h.name, None, p, 0.7);
             let w = (r.width() - 52.0 - 56.0).max(80.0);
             text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &h.name, font(13.5), p.text, w);
-            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, self.catalog.message("handoff-entry", &[("reason", &h.reason), ("time", &ago(h.at, &self.catalog))]), font(12.0), p.red, w);
+            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, self.catalog.message("handoff-entry", &[("reason", &handoff_summary(&h.reason, &self.catalog)), ("time", &ago(h.at, &self.catalog))]), font(12.0), p.red, w);
             if hovered {
                 let b = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
                 if icon_at(ui, b, resp.id.with(("handoff_x", i)), ic::X, self.catalog.text(Label::RemoveRecord), p) {
@@ -3180,7 +3195,7 @@ impl App {
                 let t = since_on(&ctx, Id::new(("pending_err", pop.key)), true).unwrap_or(1.0);
                 let k = ease_out_cubic((t / 0.5).min(1.0));
                 pt.rect_filled(bar, CornerRadius::same(2), blend(p.red, p.accent, k));
-                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, self.catalog.message("handoff-failed", &[("error", err)]), font(12.0), p.red, b.width());
+                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, self.catalog.message("handoff-failed", &[("error", &handoff_summary(err, &self.catalog))]), font(12.0), p.red, b.width());
                 text_line(&pt, pos2(b.left(), by + 40.0), Align2::LEFT_CENTER, self.catalog.text(Label::BrowserContinues), font(12.0), p.weak, b.width() - 90.0);
                 self.catalog.text(Label::Close)
             } else {
