@@ -1,0 +1,10 @@
+{
+  "extensionDescription": { "message": "Let GaGaDown handle browser downloads" },
+  "checking": { "message": "Connecting…" },
+  "connected": { "message": "Connected" },
+  "notRunning": { "message": "Not running" },
+  "takeover": { "message": "Handle browser downloads" },
+  "minimumSize": { "message": "Minimum file size" },
+  "downloadWith": { "message": "Download with GaGaDown" },
+  "version": { "message": "Version $VERSION$", "placeholders": { "version": { "content": "$1", "example": "0.1.3" } } }
+}

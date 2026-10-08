@@ -31,9 +31,22 @@ ShowUninstDetails nevershow
 !insertmacro MUI_PAGE_INSTFILES
 UninstPage custom un.OptionsPage un.OptionsLeave
 !insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
+; NSIS selects the matching system UI language; unsupported languages use English.
+LangString UninstallTitle ${LANG_ENGLISH} "Uninstall ${APP}"
+LangString UninstallTitle ${LANG_SIMPCHINESE} "卸载 ${APP}"
+LangString KeepDownloads ${LANG_ENGLISH} "Downloaded files will not be deleted"
+LangString KeepDownloads ${LANG_SIMPCHINESE} "已下载的文件不会被删除"
+LangString PurgeSettings ${LANG_ENGLISH} "Also delete task history and settings"
+LangString PurgeSettings ${LANG_SIMPCHINESE} "同时删除任务记录和设置"
+
 VIProductVersion "${VERSION}.0"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "${APP}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "${APP} Setup"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${VERSION}"
 VIAddVersionKey /LANG=${LANG_SIMPCHINESE} "ProductName" "${APP}"
 VIAddVersionKey /LANG=${LANG_SIMPCHINESE} "FileDescription" "${APP} 安装程序"
 VIAddVersionKey /LANG=${LANG_SIMPCHINESE} "FileVersion" "${VERSION}"
@@ -82,10 +95,10 @@ Function .onInstSuccess
 FunctionEnd
 
 Function un.OptionsPage
-  !insertmacro MUI_HEADER_TEXT "卸载 ${APP}" "已下载的文件不会被删除"
+  !insertmacro MUI_HEADER_TEXT "$(UninstallTitle)" "$(KeepDownloads)"
   nsDialogs::Create 1018
   Pop $0
-  ${NSD_CreateCheckbox} 0 0 100% 12u "同时删除任务记录和设置"
+  ${NSD_CreateCheckbox} 0 0 100% 24u "$(PurgeSettings)"
   Pop $PurgeBox
   nsDialogs::Show
 FunctionEnd

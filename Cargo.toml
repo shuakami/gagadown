@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/gagadown-core", "crates/gagadown-cli", "crates/gagadown-app"]
+members = ["crates/gagadown-core", "crates/gagadown-cli", "crates/gagadown-app", "crates/gagadown-i18n"]
 
 [profile.release]
 opt-level = 3

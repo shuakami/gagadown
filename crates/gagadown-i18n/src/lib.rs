@@ -1,0 +1,152 @@
+//! Fluent catalogs shared by presentation layers. The download core stays locale-neutral.
+//! Static labels are resolved once and borrowed by index without locks or formatting.
+use fluent_bundle::{FluentArgs, FluentBundle, FluentResource};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Language {
+    #[default]
+    Chinese,
+    English,
+}
+
+impl Language {
+    pub fn resolve(preference: &str, system: Option<&str>) -> Self {
+        let locale = if preference == "system" { system.unwrap_or("zh-CN") } else { preference };
+        if locale.split(['-', '_']).next().is_some_and(|s| s.eq_ignore_ascii_case("en")) {
+            Self::English
+        } else {
+            Self::Chinese
+        }
+    }
+
+    pub fn from_preference(preference: &str) -> Self {
+        Self::resolve(preference, sys_locale::get_locale().as_deref())
+    }
+
+    pub fn tag(self) -> &'static str {
+        match self { Self::Chinese => "zh-CN", Self::English => "en" }
+    }
+}
+
+macro_rules! labels {
+    ($($variant:ident => $key:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug)]
+        #[repr(usize)]
+        pub enum Label { $($variant),+ }
+        const LABEL_KEYS: &[&str] = &[$($key),+];
+    };
+}
+
+labels! {
+    Language => "language",
+    SystemLanguage => "system-language",
+    Pause => "pause",
+    Resume => "resume",
+    Cancel => "cancel",
+    Delete => "delete",
+    Settings => "settings",
+    Downloads => "downloads",
+    Completed => "completed",
+    Trash => "trash",
+    DirectThenProxy => "direct-then-proxy",
+    DirectOnly => "direct-only",
+    ProxyThenDirect => "proxy-then-direct",
+    ProxyOnly => "proxy-only",
+}
+
+pub struct Catalog {
+    language: Language,
+    bundle: FluentBundle<FluentResource>,
+    labels: Vec<String>,
+}
+
+impl Catalog {
+    /// Catalog errors are returned, never converted to a release-mode abort.
+    pub fn new(language: Language) -> Result<Self, String> {
+        let source = match language {
+            Language::Chinese => include_str!("../locales/zh-CN.ftl"),
+            Language::English => include_str!("../locales/en.ftl"),
+        };
+        let resource = FluentResource::try_new(source.to_owned())
+            .map_err(|(_, errors)| format!("Invalid Fluent resource: {errors:?}"))?;
+        let id = language.tag().parse().map_err(|e| format!("Invalid locale: {e}"))?;
+        let mut bundle = FluentBundle::new(vec![id]);
+        bundle.add_resource(resource).map_err(|e| format!("Duplicate Fluent resource: {e:?}"))?;
+        let mut catalog = Self { language, bundle, labels: Vec::with_capacity(LABEL_KEYS.len()) };
+        for key in LABEL_KEYS {
+            catalog.labels.push(catalog.format(key, None)?);
+        }
+        Ok(catalog)
+    }
+
+    pub fn language(&self) -> Language { self.language }
+
+    #[inline]
+    pub fn text(&self, label: Label) -> &str { &self.labels[label as usize] }
+
+    /// Replace the complete snapshot only after the new catalog validates successfully.
+    pub fn switch(&mut self, language: Language) -> Result<(), String> {
+        if self.language != language { *self = Self::new(language)?; }
+        Ok(())
+    }
+
+    pub fn format(&self, key: &str, args: Option<&FluentArgs<'_>>) -> Result<String, String> {
+        let pattern = self.bundle.get_message(key).and_then(|m| m.value())
+            .ok_or_else(|| format!("Missing Fluent message: {key}"))?;
+        let mut errors = Vec::new();
+        let value = self.bundle.format_pattern(pattern, args, &mut errors);
+        if errors.is_empty() { Ok(value.into_owned()) }
+        else { Err(format!("Fluent message {key}: {errors:?}")) }
+    }
+
+    pub fn task_count(&self, count: u32) -> Result<String, String> {
+        let mut args = FluentArgs::new();
+        args.set("count", count);
+        self.format("task-count", Some(&args))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_labels_switch_without_changing_keys() {
+        let mut catalog = Catalog::new(Language::Chinese).unwrap();
+        assert_eq!(catalog.text(Label::Pause), "暂停");
+        let address = catalog.text(Label::Pause).as_ptr();
+        assert_eq!(address, catalog.text(Label::Pause).as_ptr());
+        catalog.switch(Language::English).unwrap();
+        assert_eq!(catalog.text(Label::Pause), "Pause");
+        for key in LABEL_KEYS { assert!(!catalog.format(key, None).unwrap().is_empty()); }
+    }
+
+    #[test]
+    fn missing_keys_and_arguments_are_errors() {
+        for language in [Language::Chinese, Language::English] {
+            let catalog = Catalog::new(language).unwrap();
+            assert!(catalog.format("does-not-exist", None).is_err());
+            assert!(catalog.format("task-count", None).is_err());
+        }
+    }
+
+    #[test]
+    fn english_plurals() {
+        let catalog = Catalog::new(Language::English).unwrap();
+        for (count, expected) in [(0, "0 tasks"), (1, "1 task"), (2, "2 tasks")] {
+            // Fluent isolates interpolated text to preserve bidirectional correctness.
+            let text = catalog.task_count(count).unwrap().replace(['\u{2068}', '\u{2069}'], "");
+            assert_eq!(text, expected);
+        }
+    }
+
+    #[test]
+    fn explicit_default_and_system_language() {
+        assert_eq!(Language::default(), Language::Chinese);
+        assert_eq!(Language::resolve("zh-CN", Some("en-US")), Language::Chinese);
+        assert_eq!(Language::resolve("en", Some("zh-CN")), Language::English);
+        assert_eq!(Language::resolve("system", Some("en_US")), Language::English);
+        assert_eq!(Language::resolve("system", Some("de-DE")), Language::Chinese);
+        assert_eq!(Language::resolve("system", None), Language::Chinese);
+    }
+}

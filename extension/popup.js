@@ -1,3 +1,8 @@
+const message = (key, substitutions) => chrome.i18n.getMessage(key, substitutions);
+document.documentElement.lang = chrome.i18n.getUILanguage();
+for (const element of document.querySelectorAll("[data-i18n]")) {
+  element.textContent = message(element.dataset.i18n);
+}
 const toggle = document.getElementById("toggle");
 const stateText = document.getElementById("stateText");
 const minSize = document.getElementById("minSize");
@@ -13,9 +18,11 @@ document.getElementById("toggleRow").addEventListener("click", async () => {
   toggle.classList.toggle("on", enabled);
   await chrome.storage.local.set({ enabled });
 });
-document.getElementById("ver").textContent = `版本 ${chrome.runtime.getManifest().version}`;
+document.getElementById("ver").textContent = message("version", chrome.runtime.getManifest().version);
 
 chrome.runtime.sendMessage("ping").then((j) => {
-  stateText.textContent = j ? "已连接" : "未运行";
+  stateText.textContent = message(j ? "connected" : "notRunning");
   if (j && typeof j.takeover_min_size === "number") minSize.textContent = size(j.takeover_min_size);
+}).catch(() => {
+  stateText.textContent = message("notRunning");
 });

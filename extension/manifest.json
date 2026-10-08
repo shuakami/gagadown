@@ -2,11 +2,12 @@
   "manifest_version": 3,
   "name": "GaGaDown",
   "version": "0.1.0",
-  "description": "使用 GaGaDown 接管浏览器下载",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "zh_CN",
   "permissions": ["downloads", "downloads.ui", "cookies", "webRequest", "contextMenus", "storage", "alarms"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
-  "action": { "default_popup": "popup.html", "default_title": "GagaDown", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } },
+  "action": { "default_popup": "popup.html", "default_title": "GaGaDown", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } },
   "minimum_chrome_version": "110"
 }

@@ -1,0 +1,10 @@
+{
+  "extensionDescription": { "message": "使用 GaGaDown 接管浏览器下载" },
+  "checking": { "message": "检测中" },
+  "connected": { "message": "已连接" },
+  "notRunning": { "message": "未运行" },
+  "takeover": { "message": "接管浏览器下载" },
+  "minimumSize": { "message": "最小接管大小" },
+  "downloadWith": { "message": "使用 GaGaDown 下载" },
+  "version": { "message": "版本 $VERSION$", "placeholders": { "version": { "content": "$1", "example": "0.1.3" } } }
+}

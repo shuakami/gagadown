@@ -138,7 +138,7 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({ id: "gagadown", title: "使用 GaGaDown 下载", contexts: ["link", "video", "audio", "image"] });
+  chrome.contextMenus.create({ id: "gagadown", title: chrome.i18n.getMessage("downloadWith"), contexts: ["link", "video", "audio", "image"] });
   ping();
 });
 chrome.runtime.onStartup.addListener(ping);

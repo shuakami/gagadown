@@ -428,6 +428,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
     ("background.js", include_bytes!("../../../extension/background.js")),
     ("popup.html", include_bytes!("../../../extension/popup.html")),
     ("popup.js", include_bytes!("../../../extension/popup.js")),
+    ("_locales/zh_CN/messages.json", include_bytes!("../../../extension/_locales/zh_CN/messages.json")),
+    ("_locales/en/messages.json", include_bytes!("../../../extension/_locales/en/messages.json")),
     ("icons/16.png", include_bytes!("../../../extension/icons/16.png")),
     ("icons/32.png", include_bytes!("../../../extension/icons/32.png")),
     ("icons/48.png", include_bytes!("../../../extension/icons/48.png")),
@@ -1269,7 +1271,7 @@ mod win {
                 if f.is_null() {
                     return None;
                 }
-                SelectObject(dc, f);
+                let previous = SelectObject(dc, f);
                 // Glyph ids are only meaningful if GDI picked the very same face (it may report a
                 // localized family name, so compare table data instead).
                 let table = |tag: &[u8; 4], off: u32, n: usize| {
@@ -1279,6 +1281,9 @@ mod win {
                 let glyphs = table(b"maxp", 4, 2).map(|b| u16::from_be_bytes([b[0], b[1]]) as u32);
                 let sum = table(b"head", 8, 4).map(u32::from_be_bytes);
                 let same = glyphs == Some(r.num_glyphs) && sum == Some(r.checksum);
+                // GDI cannot delete a selected font. Restore the previous object
+                // on both paths; the validated font is selected below for drawing.
+                SelectObject(dc, previous);
                 if !same {
                     DeleteObject(f);
                     return None;

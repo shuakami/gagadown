@@ -1,0 +1,15 @@
+language = 语言
+system-language = 跟随系统
+pause = 暂停
+resume = 继续
+cancel = 取消
+delete = 删除
+settings = 设置
+downloads = 下载中
+completed = 已完成
+trash = 回收站
+direct-then-proxy = 默认直连，失败自动走代理
+direct-only = 仅直连
+proxy-then-direct = 优先代理，失败回退直连
+proxy-only = 仅代理
+task-count = { $count } 个任务
