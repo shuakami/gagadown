@@ -137,6 +137,18 @@ Release panic=abort makes panic avoidance a release gate.
 - Integrated the shared catalog into App startup with fallible initialization, persisted language preference and a settings selector. Migrated settings controls and proxy mode labels to typed cached labels. Remaining GUI surfaces, CLI and core diagnostic migration are still outstanding.
 - Added old-settings compatibility and preference round-trip tests. Added English README with reciprocal links and included both READMEs and LICENSE in the source package.
 
+- Work commits pushed without releasing: eca5a4c, 8ec0c63, 46f4bee. The main branch and release tags remain unchanged by this work.
+- CI 37754063141: catalogs and Windows jobs passed, including app check and core tests. Package job remained in progress at last inspection.
+- CI 37755375572: catalogs job passed, now including AST parity tests. Windows/package remained in progress at last inspection.
+- Navigation tooltip IDs now depend on typed label IDs rather than translated text. About labels and completed-download summary use Fluent.
+- Font fallback order now prefers Segoe UI on Windows (Segoe UI Semibold for emphasized text), then Microsoft YaHei; Linux probes DejaVu/Noto before CJK fallbacks. These source changes still require visual verification.
+- Added Linux release build and an isolated Xvfb launch smoke test to CI. A timed launch is only startup evidence, not a screenshot/layout or interactive regression test.
+
+- CI 37754063141 and 37755375572 completed successfully (catalogs, Windows checks/tests, cross-target clippy and Windows package).
+- CI 37755702038 failed the Linux runtime test after successful compilation: the downloaded runtime log reports missing libxkbcommon-x11.so and a process abort. Added the missing runtime package to the CI environment; the runtime acceptance assertion is unchanged. A rerun is required.
+- Began CLI integration: explicit --language, translated command descriptions and progress labels. Full help/error/completion coverage remains unfinished.
+- CLI inspection found it unconditionally removed the caller-supplied --data-dir after a download. Cleanup now applies only to the automatically created temporary directory. Also removed an error-path unwrap; runtime regression coverage is still required.
+
 ## Observations recorded so far
 
 - Existing app text helpers round galley origin to physical pixels; this alone does not establish final glyph alignment.

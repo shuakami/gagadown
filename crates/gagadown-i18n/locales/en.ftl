@@ -1,3 +1,12 @@
+cli-about = GaGaDown command line
+cli-get = Download one URL and exit
+cli-serve = Run the engine with the browser API and no GUI
+cli-proxies = Detect local proxy ports
+cli-data-directory = Task data folder (default: an isolated temporary folder)
+cli-language = Display language: zh-CN, en, or system
+cli-connections = connections
+cli-splits = splits
+cli-failed = Download failed
 about = About
 open-data-directory = Open data folder
 data-directory-help = Settings, task history and logs are stored here

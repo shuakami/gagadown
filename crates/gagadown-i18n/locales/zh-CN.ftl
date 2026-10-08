@@ -1,3 +1,12 @@
+cli-about = GaGaDown 命令行
+cli-get = 下载一个链接后退出
+cli-serve = 不打开界面，运行下载引擎和浏览器 API
+cli-proxies = 探测本机代理端口
+cli-data-directory = 任务数据目录（默认使用独立临时目录）
+cli-language = 显示语言：zh-CN、en 或 system
+cli-connections = 连接
+cli-splits = 分段
+cli-failed = 下载失败
 about = 关于
 open-data-directory = 打开数据目录
 data-directory-help = 设置、任务记录和日志都在这里

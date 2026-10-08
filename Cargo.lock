@@ -1323,6 +1323,7 @@ dependencies = [
  "anyhow",
  "clap",
  "gagadown-core",
+ "gagadown-i18n",
  "tokio",
  "tracing-subscriber",
 ]

@@ -1,12 +1,15 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use gagadown_i18n::{Catalog, Label, Language};
 use gagadown_core::{AddRequest, Engine, Status};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(name = "gagadown", version, about = "GagaDown command line")]
+#[command(name = "gagadown", version, about = "GaGaDown command line")]
 struct Cli {
+    #[arg(long, global = true, default_value = "zh-CN", value_parser = ["zh-CN", "en", "system"])]
+    language: String,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -55,9 +58,29 @@ fn human(b: f64) -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
-    let cli = Cli::parse();
+    let args: Vec<_> = std::env::args_os().collect();
+    // Resolve the language before clap renders --help. Let clap validate values.
+    let mut preference = "zh-CN".to_owned();
+    for (index, arg) in args.iter().enumerate().skip(1) {
+        if arg == "--" { break; }
+        if arg == "--language" {
+            if let Some(value) = args.get(index + 1).and_then(|s| s.to_str()) { preference = value.to_owned(); }
+        } else if let Some(value) = arg.to_str().and_then(|s| s.strip_prefix("--language=")) {
+            preference = value.to_owned();
+        }
+    }
+    let catalog = Catalog::new(Language::from_preference(&preference)).map_err(anyhow::Error::msg)?;
+    let command = Cli::command()
+        .about(catalog.text(Label::CliAbout).to_owned())
+        .mut_arg("language", |arg| arg.help(catalog.text(Label::CliLanguage).to_owned()))
+        .mut_subcommand("get", |cmd| cmd.about(catalog.text(Label::CliGet).to_owned())
+            .mut_arg("data_dir", |arg| arg.help(catalog.text(Label::CliDataDirectory).to_owned())))
+        .mut_subcommand("serve", |cmd| cmd.about(catalog.text(Label::CliServe).to_owned()))
+        .mut_subcommand("proxies", |cmd| cmd.about(catalog.text(Label::CliProxies).to_owned()));
+    let cli = Cli::from_arg_matches(&command.get_matches_from(args))?;
     match cli.cmd {
         Cmd::Get { url, dir, max_connections, initial, proxy, direct_only, sha256, data_dir } => {
+            let temporary_data = data_dir.is_none();
             let data_dir = data_dir.unwrap_or_else(|| std::env::temp_dir().join(format!("gagadown-cli-{}", std::process::id())));
             let engine = Engine::new(Some(data_dir.clone()))?;
             let mut s = engine.settings();
@@ -81,11 +104,13 @@ async fn main() -> Result<()> {
                 let Some(v) = engine.views(0).into_iter().find(|v| v.id == out.id) else { break };
                 let pct = v.size.map(|s| if s > 0 { v.downloaded as f64 * 100.0 / s as f64 } else { 100.0 }).unwrap_or(0.0);
                 eprint!(
-                    "\r{:>6.2}%  {:>10}/s  conns {:>3}/{:<3} splits {:<5} {:<12}",
+                    "\r{:>6.2}%  {:>10}/s  {} {:>3}/{:<3} {} {:<5} {:<12}",
                     pct,
                     human(v.speed),
+                    catalog.text(Label::CliConnections),
                     v.connections,
                     v.target,
+                    catalog.text(Label::CliSplits),
                     v.splits,
                     v.route.clone().unwrap_or_default()
                 );
@@ -96,17 +121,20 @@ async fn main() -> Result<()> {
                         break;
                     }
                     Status::Failed if v.next_retry_at.is_none() => {
-                        let e = v.error.unwrap();
-                        eprintln!("\nfailed: {} {}", e.kind.label(), e.message);
+                        if let Some(error) = v.error {
+                            eprintln!("\n{}: {:?} {}", catalog.text(Label::CliFailed), error.kind, error.message);
+                        } else {
+                            eprintln!("\n{}", catalog.text(Label::CliFailed));
+                        }
                         engine.shutdown().await;
-                        let _ = std::fs::remove_dir_all(&data_dir);
+                        if temporary_data { let _ = std::fs::remove_dir_all(&data_dir); }
                         std::process::exit(1);
                     }
                     _ => {}
                 }
             }
             engine.shutdown().await;
-            let _ = std::fs::remove_dir_all(&data_dir);
+            if temporary_data { let _ = std::fs::remove_dir_all(&data_dir); }
         }
         Cmd::Serve { port } => {
             let engine = Engine::new(None)?;
