@@ -249,30 +249,30 @@ fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError, catalog: &Cata
     };
     let scrub = |s: &str| s.replace(&v.url, &masked);
     let mut s = String::new();
-    let _ = writeln!(s, "文件    {}", v.filename);
-    let _ = writeln!(s, "链接    {masked}");
-    let _ = writeln!(s, "时间    {}", when(e.at, catalog));
-    let _ = writeln!(s, "类型    {:?}", e.kind);
+    let _ = writeln!(s, "{}    {}", catalog.text(Label::ReportFile), v.filename);
+    let _ = writeln!(s, "{}    {masked}", catalog.text(Label::Link));
+    let _ = writeln!(s, "{}    {}", catalog.text(Label::ReportTime), when(e.at, catalog));
+    let _ = writeln!(s, "{}    {:?}", catalog.text(Label::ReportType), e.kind);
     if let Some(c) = e.status {
-        let _ = writeln!(s, "状态码  HTTP {c}");
+        let _ = writeln!(s, "{}  HTTP {c}", catalog.text(Label::ReportStatus));
     }
-    let _ = writeln!(s, "原始信息  {}", scrub(&e.message));
+    let _ = writeln!(s, "{}  {}", catalog.text(Label::ReportRaw), scrub(&e.message));
     if !e.routes.is_empty() {
-        s.push_str("\n各线路结果\n");
+        let _ = writeln!(s, "\n{}", catalog.text(Label::ReportRoutes));
         for r in &e.routes {
             match r.status {
                 Some(c) => {
                     let _ = writeln!(s, "  {}  HTTP {c}", r.route);
                 }
                 None => {
-                    let why = gagadown_core::error::brief(&r.message).unwrap_or("无响应");
+                    let why = catalog.text(Label::NoResponse);
                     let _ = writeln!(s, "  {}  {why}\n    {}", r.route, scrub(&r.message));
                 }
             }
         }
     }
     if !v.log.is_empty() {
-        s.push_str("\n最近日志\n");
+        let _ = writeln!(s, "\n{}", catalog.text(Label::ReportLogs));
         for l in v.log.iter().rev().take(12).rev() {
             let _ = writeln!(s, "  {}  {}", when(l.at, catalog), scrub(&l.text));
         }
@@ -620,36 +620,36 @@ fn of(v: &TaskView) -> String {
 
 fn meta_line(v: &TaskView, p: &Pal, catalog: &Catalog) -> (String, Color32) {
     match v.status {
-        Status::Queued if v.downloaded > 0 => (format!("排队中   {}", of(v)), p.weak),
-        Status::Queued => ("排队中".into(), p.weak),
-        Status::Paused => (format!("已暂停   {}", of(v)), p.weak),
+        Status::Queued if v.downloaded > 0 => (format!("{}   {}", catalog.text(Label::Queued), of(v)), p.weak),
+        Status::Queued => (catalog.text(Label::Queued).into(), p.weak),
+        Status::Paused => (format!("{}   {}", catalog.text(Label::Paused), of(v)), p.weak),
         Status::Running => match v.phase {
             Some(Phase::Downloading) | None => {
                 let mut s = format!("{}   {}", of(v), speed(v.speed));
                 if let Some(e) = v.eta_secs {
-                    s += &format!("   剩余 {}", dur(e, catalog));
+                    s += &format!("   {}", catalog.message("remaining-time", &[("time", &dur(e, catalog))]));
                 }
                 (s, p.weak)
             }
-            Some(Phase::Connecting) => ("连接中".into(), p.weak),
-            Some(Phase::Finalizing) => ("写入中".into(), p.weak),
-            Some(Phase::Verifying) => ("校验中".into(), p.weak),
+            Some(Phase::Connecting) => (catalog.text(Label::Connecting).into(), p.weak),
+            Some(Phase::Finalizing) => (catalog.text(Label::Finalizing).into(), p.weak),
+            Some(Phase::Verifying) => (catalog.text(Label::Verifying).into(), p.weak),
         },
-        Status::Completed if v.file_missing => ("文件已被移动或删除".into(), p.orange),
+        Status::Completed if v.file_missing => (catalog.text(Label::FileMissing).into(), p.orange),
         Status::Completed => {
             let mut s = v.size.map(bytes).unwrap_or_default();
             if v.avg_speed > 0.0 {
-                s += &format!("   平均 {}", speed(v.avg_speed));
+                s += &format!("   {}", catalog.message("average-rate", &[("speed", &speed(v.avg_speed))]));
             }
             (s, p.weak)
         }
         Status::Failed => {
             let mut s = match &v.error {
                 Some(e) => e.summary(),
-                None => "失败".into(),
+                None => catalog.text(Label::Failed).into(),
             };
             if let Some(t) = v.next_retry_at {
-                s += &format!("，{} 后自动重试", dur(t.saturating_sub(now_secs()), catalog));
+                s += &format!("   {}", catalog.message("retry-after", &[("time", &dur(t.saturating_sub(now_secs()), catalog))]));
             }
             (s, p.red)
         }
@@ -1931,10 +1931,10 @@ impl App {
         };
         item(speed(self.engine.total_speed()));
         if busy {
-            item(format!("{} 个下载中", running.len()));
+            item(self.catalog.number_message("running-count", running.len() as u64));
         }
         if queued > 0 {
-            item(format!("{queued} 个排队"));
+            item(self.catalog.number_message("queued-count", queued as u64));
         }
         let (done, total) = running.iter().filter_map(|v| v.size.map(|s| (v.downloaded, s))).fold((0u64, 0u64), |a, b| (a.0 + b.0, a.1 + b.1));
         if total > 0 {
@@ -1964,9 +1964,9 @@ impl App {
         let key = Id::new(("hero", v.id));
         let net = spring(&ctx, key.with("spd"), v.speed as f32, 5.0, 0.0) as f64;
         let stats = [
-            ("网络", speed(net)),
-            ("峰值", speed(peak.max(v.speed))),
-            ("连接", format!("{} / {}", v.connections, v.target)),
+            (self.catalog.text(Label::Network), speed(net)),
+            (self.catalog.text(Label::Peak), speed(peak.max(v.speed))),
+            (self.catalog.text(Label::Connections), format!("{} / {}", v.connections, v.target)),
         ];
         for (i, (k, val)) in stats.iter().enumerate() {
             let x = left.left() + i as f32 * 118.0;
@@ -1975,7 +1975,7 @@ impl App {
         }
 
         let y = left.top() + 84.0;
-        pt.text(pos2(left.left(), y), Align2::LEFT_CENTER, if v.status == Status::Paused { "已暂停" } else { "正在下载" }, font(12.0), p.text);
+        pt.text(pos2(left.left(), y), Align2::LEFT_CENTER, if v.status == Status::Paused { self.catalog.text(Label::Paused) } else { self.catalog.text(Label::Downloading) }, font(12.0), p.text);
         let f = seg_bar(&ctx, &pt, Rect::from_min_size(pos2(left.left(), y + 10.0), vec2(left.width(), 5.0)), v, p, key);
         let right = match v.size {
             Some(_) => format!("{}   {:.0}%", of(v), f * 100.0),
@@ -1984,13 +1984,13 @@ impl App {
         pt.text(pos2(left.right(), y), Align2::RIGHT_CENTER, right, font(12.0), p.weak);
 
         let eta = match (v.status, v.eta_secs) {
-            (Status::Running, Some(e)) => format!("剩余时间 {}", dur(e, &self.catalog)),
+            (Status::Running, Some(e)) => self.catalog.message("remaining-time", &[("time", &dur(e, &self.catalog))]),
             (Status::Running, None) => meta_line(v, p, &self.catalog).0,
             _ => String::new(),
         };
         pt.text(pos2(left.left(), y + 38.0), Align2::LEFT_CENTER, eta, font(12.0), p.weak);
         let br = Rect::from_min_size(pos2(left.right() - 26.0, y + 25.0), vec2(26.0, 26.0));
-        let (icon, tip, a) = if v.status == Status::Paused { (ic::PLAY, "继续", Act::Resume) } else { (ic::PAUSE, "暂停", Act::Pause) };
+        let (icon, tip, a) = if v.status == Status::Paused { (ic::PLAY, self.catalog.text(Label::Resume), Act::Resume) } else { (ic::PAUSE, self.catalog.text(Label::Pause), Act::Pause) };
         if icon_at(ui, br, Id::new("hero_btn"), icon, tip, p) {
             self.act(&ctx, v, a);
         }
@@ -3148,7 +3148,7 @@ impl App {
                 let t = since_on(&ctx, Id::new(("pending_err", pop.key)), true).unwrap_or(1.0);
                 let k = ease_out_cubic((t / 0.5).min(1.0));
                 pt.rect_filled(bar, CornerRadius::same(2), blend(p.red, p.accent, k));
-                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, format!("无法接管：{err}"), font(12.0), p.red, b.width());
+                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, self.catalog.message("handoff-failed", &[("error", err)]), font(12.0), p.red, b.width());
                 text_line(&pt, pos2(b.left(), by + 40.0), Align2::LEFT_CENTER, self.catalog.text(Label::BrowserContinues), font(12.0), p.weak, b.width() - 90.0);
                 self.catalog.text(Label::Close)
             } else {
@@ -3227,18 +3227,18 @@ impl App {
                 let r1 = text_line(&pt, pos2(b.left(), y), Align2::LEFT_CENTER, self.catalog.text(Label::DownloadComplete), font(12.5), p.green.gamma_multiply(a), 120.0);
                 let mut extra = Vec::new();
                 if let Some(fin) = v.finished_at {
-                    extra.push(format!("用时 {}", dur(fin.saturating_sub(v.created_at).max(1), &self.catalog)));
+                    extra.push(self.catalog.message("elapsed-time", &[("time", &dur(fin.saturating_sub(v.created_at).max(1), &self.catalog))]));
                 }
                 if v.avg_speed > 0.0 {
-                    extra.push(format!("平均 {}", speed(v.avg_speed)));
+                    extra.push(self.catalog.message("average-rate", &[("speed", &speed(v.avg_speed))]));
                 }
                 text_line(&pt, pos2(r1.right() + 12.0, y), Align2::LEFT_CENTER, extra.join("   "), font(12.0), p.weak.gamma_multiply(a), b.right() - r1.right() - 12.0);
             } else {
                 let sp = speed(spring(&ctx, key.with("spd"), v.speed as f32, 5.0, 0.0) as f64);
                 let (line, lc) = match v.status {
                     Status::Running => match v.eta_secs {
-                        Some(e) => (format!("{sp}   剩余 {}   {} 连接", dur(e, &self.catalog), v.connections), p.weak),
-                        None => (format!("{sp}   {} 连接", v.connections), p.weak),
+                        Some(e) => (format!("{sp}   {}   {}", self.catalog.message("remaining-time", &[("time", &dur(e, &self.catalog))]), self.catalog.number_message("connection-count", v.connections as u64)), p.weak),
+                        None => (format!("{sp}   {}", self.catalog.number_message("connection-count", v.connections as u64)), p.weak),
                     },
                     _ => meta_line(v, p, &self.catalog),
                 };

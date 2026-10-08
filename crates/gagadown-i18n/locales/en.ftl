@@ -35,6 +35,34 @@ days-ago = { $count ->
     }
 today-time = Today { $time }
 yesterday-time = Yesterday { $time }
+report-file = File
+report-time = Time
+report-type = Type
+report-status = Status
+report-raw = Original diagnostic
+report-routes = Route results
+report-logs = Recent diagnostics (original text)
+no-response = No response
+peak = Peak
+running-count = { $count ->
+    [one] { $count } download running
+   *[other] { $count } downloads running
+    }
+queued-count = { $count } queued
+handoff-failed = Could not take over: { $error }
+elapsed-time = Took { $time }
+connection-count = { $count ->
+    [one] { $count } connection
+   *[other] { $count } connections
+    }
+queued = Queued
+paused = Paused
+finalizing = Writing to disk
+verifying = Verifying
+file-missing = File moved or deleted
+remaining-time = Remaining { $time }
+average-rate = Average { $speed }
+retry-after = Retrying automatically in { $time }
 start-all = Start all
 pause-all = Pause all
 retry-all = Retry all
