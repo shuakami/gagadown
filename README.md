@@ -7,7 +7,7 @@ GaGaDown 是一个专为速度设计、UI 美观的桌面下载器，原生支�
 <a href="https://github.com/shuakami/gagadown/releases/latest/download/GagaDown-windows-setup.exe"><img src="docs/download-windows.svg" alt="Download for Windows" /></a>
 <a href="https://github.com/shuakami/gagadown/releases/latest/download/GagaDown-linux-x86_64.tar.gz"><img src="docs/download-linux.svg" alt="Download for Linux" /></a>
 
-**[下载][releases-link]** **[反馈问题][issues-link]**
+**[下载][releases-link]** **[反馈问题][issues-link]** **[隐私政策][privacy-link]**
 
 [![][github-release-shield]][releases-link]
 [![][github-downloads-shield]][releases-link]
@@ -46,7 +46,7 @@ cd GagaDown-*-linux-x86_64
 
 ### 浏览器插件
 
-在浏览器地址栏打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启「开发者模式」。点击「加载已解压的扩展程序」，选择 GaGaDown 数据目录下的 `extension` 文件夹。可以在 GaGaDown 的插件页一键复制该路径。
+在浏览器地址栏打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启「开发者模式」。点击「加载未打包的扩展程序」，选择 GaGaDown 数据目录下的 `extension` 文件夹。可以在 GaGaDown 的插件页一键复制该路径。
 
 ### 命令行
 
@@ -85,6 +85,7 @@ bash tools/package.sh
 [image-banner]: docs/images/banner.png
 [releases-link]: https://github.com/shuakami/gagadown/releases
 [issues-link]: https://github.com/shuakami/gagadown/issues
+[privacy-link]: docs/privacy-policy.md
 [stars-link]: https://github.com/shuakami/gagadown/stargazers
 [license-link]: LICENSE
 [github-release-shield]: https://img.shields.io/github/v/release/shuakami/gagadown?color=317cfe&labelColor=black&logo=github&style=flat-square

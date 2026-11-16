@@ -335,7 +335,7 @@ pub async fn detect_local_proxies() -> Vec<String> {
 
 pub async fn verify_proxy(p: &str) -> bool {
     let Ok(client) = build_client(Some(p), false) else { return false };
-    for u in ["http://www.gstatic.com/generate_204", "http://cp.cloudflare.com/generate_204", "http://connectivitycheck.platform.hicloud.com/generate_204"] {
+    for u in ["https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204", "https://connectivitycheck.platform.hicloud.com/generate_204"] {
         if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(5), client.get(u).send()).await {
             if r.status().is_success() || r.status().as_u16() == 204 {
                 return true;

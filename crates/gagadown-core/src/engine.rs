@@ -116,6 +116,8 @@ pub struct CacheReport {
 pub struct Inner {
     pub settings: RwLock<Settings>,
     pub data_dir: PathBuf,
+    state_cipher: crate::secure_state::StateCipher,
+    api_token: String,
     // Hold for the entire engine lifetime, including background workers.
     _instance_lock: std::fs::File,
     show_requested: std::sync::atomic::AtomicBool,
@@ -257,8 +259,27 @@ impl Engine {
             .open(data_dir.join("engine.lock"))?;
         fs4::FileExt::try_lock(&instance_lock)
             .map_err(|e| DlError::new(ErrorKind::AlreadyRunning, format!("GaGaDown 已在运行：{e}")))?;
+        let state_cipher = crate::secure_state::StateCipher::load_or_create()
+            .map_err(|e| DlError::new(ErrorKind::Io, format!("无法安全访问系统密钥环，GaGaDown 未读取任务记录：{e}")))?;
+        let api_token = crate::secure_state::load_or_create_api_token()
+            .map_err(|e| DlError::new(ErrorKind::Io, format!("无法创建浏览器插件配对密钥：{e}")))?;
         let settings: Settings = read_json::<Settings>(&data_dir.join("settings.json")).unwrap_or_default().sanitized();
-        let state: State = read_json(&data_dir.join("state.json")).unwrap_or_default();
+        let state_path = data_dir.join("state.json");
+        let state: State = if state_path.exists() {
+            let stored = std::fs::read(&state_path)?;
+            let (plain, encrypted) = state_cipher.decrypt_or_legacy(&stored)
+                .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录解密失败：{e}")))?;
+            let state: State = serde_json::from_slice(&plain)
+                .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录格式无效：{e}")))?;
+            if !encrypted {
+                let ciphered = state_cipher.encrypt(&plain)
+                    .map_err(|e| DlError::new(ErrorKind::Io, format!("无法加密旧任务记录：{e}")))?;
+                atomic_write(&state_path, &ciphered)?;
+            }
+            state
+        } else {
+            State::default()
+        };
         let hosts: HashMap<String, HostStat> = read_json(&data_dir.join("hosts.json")).unwrap_or_default();
         let routes = RouteManager::new(settings.proxy.clone())?;
         *routes.hosts.lock() = hosts;
@@ -280,6 +301,8 @@ impl Engine {
             budget_size: Mutex::new(total),
             settings: RwLock::new(settings),
             data_dir,
+            state_cipher,
+            api_token,
             _instance_lock: instance_lock,
             show_requested: std::sync::atomic::AtomicBool::new(false),
             tasks: RwLock::new(tasks),
@@ -303,6 +326,10 @@ impl Engine {
 
     pub fn data_dir(&self) -> &Path {
         &self.inner.data_dir
+    }
+
+    pub fn extension_api_token(&self) -> &str {
+        &self.inner.api_token
     }
 
     /// Records a ping from the browser extension running in `kind` (`chrome`, `edge`).
@@ -477,7 +504,9 @@ impl Engine {
         let tasks: Vec<TaskRecord> = self.inner.tasks.read().iter().map(|t| t.persistable()).collect();
         let deleted = self.inner.deleted.lock().clone();
         let st = State { tasks, deleted };
-        let data = serde_json::to_vec(&st).map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))?;
+        let plain = serde_json::to_vec(&st).map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))?;
+        let data = self.inner.state_cipher.encrypt(&plain)
+            .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录加密失败：{e}")))?;
         atomic_write(&self.inner.data_dir.join("state.json"), &data)?;
         let hosts = self.inner.routes.hosts.lock().clone();
         let data = serde_json::to_vec(&hosts).unwrap_or_default();

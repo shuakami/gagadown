@@ -7,6 +7,7 @@ pub mod limiter;
 pub mod probe;
 pub mod request;
 pub mod route;
+pub mod secure_state;
 pub mod segments;
 pub mod task;
 

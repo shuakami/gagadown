@@ -13,6 +13,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use subtle::ConstantTimeEq;
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use uuid::Uuid;
@@ -20,14 +21,26 @@ use uuid::Uuid;
 const PROBE_BUDGET: Duration = Duration::from_secs(8);
 
 fn origin_ok(o: &str) -> bool {
-    o.starts_with("chrome-extension://") || o.starts_with("moz-extension://") || o.starts_with("safari-web-extension://") || o == "null"
+    ["chrome-extension://", "moz-extension://", "safari-web-extension://"].iter().any(|prefix| {
+        o.strip_prefix(prefix).is_some_and(|id| !id.is_empty() && !id.contains('/') && id != "null")
+    })
 }
 
-async fn guard(req: Request, next: Next) -> Response {
-    if let Some(o) = req.headers().get("origin").and_then(|v| v.to_str().ok()) {
-        if !origin_ok(o) {
-            return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
-        }
+async fn guard(State(engine): State<Engine>, req: Request, next: Next) -> Response {
+    let Some(o) = req.headers().get("origin").and_then(|v| v.to_str().ok()) else {
+        return (StatusCode::FORBIDDEN, "origin required").into_response();
+    };
+    if !origin_ok(o) {
+        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+    if req.method() == Method::OPTIONS {
+        return next.run(req).await;
+    }
+    let Some(token) = req.headers().get("x-gagadown-token").and_then(|v| v.to_str().ok()) else {
+        return (StatusCode::UNAUTHORIZED, "pairing required").into_response();
+    };
+    if !bool::from(token.as_bytes().ct_eq(engine.extension_api_token().as_bytes())) {
+        return (StatusCode::UNAUTHORIZED, "invalid pairing token").into_response();
     }
     next.run(req).await
 }
@@ -221,13 +234,13 @@ pub fn router(engine: Engine) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|o: &HeaderValue, _| o.to_str().map(origin_ok).unwrap_or(false)))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers([axum::http::header::CONTENT_TYPE]);
+        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::HeaderName::from_static("x-gagadown-token")]);
     Router::new()
         .route("/api/ping", get(ping))
         .route("/api/add", post(add))
         .route("/api/show", post(show))
         .route("/api/tasks", get(tasks))
-        .layer(middleware::from_fn(guard))
+        .layer(middleware::from_fn_with_state(engine.clone(), guard))
         .layer(cors)
         .with_state(engine)
 }
@@ -235,4 +248,19 @@ pub fn router(engine: Engine) -> Router {
 pub async fn serve(engine: Engine, port: u16) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     axum::serve(listener, router(engine)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::origin_ok;
+
+    #[test]
+    fn accepts_only_extension_origins() {
+        assert!(origin_ok("chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"));
+        assert!(origin_ok("moz-extension://12345678-1234-1234-1234-123456789abc"));
+        assert!(!origin_ok("null"));
+        assert!(!origin_ok("https://example.com"));
+        assert!(!origin_ok("chrome-extension://id/path"));
+        assert!(!origin_ok("chrome-extension://"));
+    }
 }

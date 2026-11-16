@@ -2,9 +2,10 @@
 // (cookies, referrer, UA, auth headers) so authenticated links keep working.
 // If GagaDown is not running or refuses the link, the browser download simply continues.
 
-const DEFAULTS = { enabled: true, port: 18765, minSize: 1024 * 1024 };
+const DEFAULTS = { enabled: false, consented: false, port: 18765, minSize: 1024 * 1024 };
 const recent = new Map();
 const MAX_RECENT = 400;
+const RECENT_TTL_MS = 5 * 60 * 1000;
 const SKIP = new Set([
   "cookie", "user-agent", "referer", "range", "if-range", "accept-encoding", "content-length",
   "host", "connection", "upgrade-insecure-requests", "if-none-match", "if-modified-since",
@@ -12,24 +13,59 @@ const SKIP = new Set([
 
 const cfg = () => chrome.storage.local.get(DEFAULTS);
 const BROWSER = /\bEdg\//.test(navigator.userAgent) ? "edge" : "chrome";
+let captureEnabled = false;
+let listenersRegistered = false;
+const filter = { urls: ["http://*/*", "https://*/*"], types: ["main_frame", "sub_frame", "xmlhttprequest", "media", "other"] };
+const onHeaders = (d) => remember(d.url, { headers: d.requestHeaders || [], method: d.method, at: Date.now() });
+const onRedirect = (d) => {
+  const r = recent.get(d.url);
+  if (r && d.redirectUrl) remember(d.redirectUrl, r);
+};
+
+function pruneRecent(now = Date.now()) {
+  for (const [url, rec] of recent) {
+    if (now < rec.at || now - rec.at > RECENT_TTL_MS) recent.delete(url);
+  }
+}
 
 function remember(url, rec) {
+  if (!captureEnabled) return;
+  pruneRecent();
   recent.delete(url);
   recent.set(url, rec);
   while (recent.size > MAX_RECENT) recent.delete(recent.keys().next().value);
 }
 
-const filter = { urls: ["<all_urls>"], types: ["main_frame", "sub_frame", "xmlhttprequest", "media", "other"] };
-const onHeaders = (d) => remember(d.url, { headers: d.requestHeaders || [], method: d.method, at: Date.now() });
-try {
-  chrome.webRequest.onSendHeaders.addListener(onHeaders, filter, ["requestHeaders", "extraHeaders"]);
-} catch {
-  chrome.webRequest.onSendHeaders.addListener(onHeaders, filter, ["requestHeaders"]);
+async function refreshCaptureState() {
+  const [{ enabled, consented }, granted] = await Promise.all([
+    chrome.storage.local.get(DEFAULTS),
+    chrome.permissions.contains({ permissions: ["cookies", "webRequest"], origins: ["http://*/*", "https://*/*"] }),
+  ]);
+  captureEnabled = !!enabled && !!consented && granted;
+  if (captureEnabled && !listenersRegistered) {
+    try {
+      chrome.webRequest.onSendHeaders.addListener(onHeaders, filter, ["requestHeaders", "extraHeaders"]);
+    } catch {
+      chrome.webRequest.onSendHeaders.addListener(onHeaders, filter, ["requestHeaders"]);
+    }
+    chrome.webRequest.onBeforeRedirect.addListener(onRedirect, filter);
+    listenersRegistered = true;
+  } else if (!captureEnabled) {
+    recent.clear();
+    if (listenersRegistered) {
+      chrome.webRequest.onSendHeaders.removeListener(onHeaders);
+      chrome.webRequest.onBeforeRedirect.removeListener(onRedirect);
+      listenersRegistered = false;
+    }
+  }
 }
-chrome.webRequest.onBeforeRedirect.addListener((d) => {
-  const r = recent.get(d.url);
-  if (r && d.redirectUrl) remember(d.redirectUrl, r);
-}, filter);
+
+refreshCaptureState();
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && (Object.hasOwn(changes, "enabled") || Object.hasOwn(changes, "consented"))) refreshCaptureState();
+});
+chrome.permissions.onAdded.addListener(refreshCaptureState);
+chrome.permissions.onRemoved.addListener(refreshCaptureState);
 
 async function cookiesFor(url) {
   try {
@@ -43,10 +79,10 @@ async function cookiesFor(url) {
 const baseName = (p) => (p ? p.split(/[\\/]/).pop() : "") || null;
 
 async function api(path, body) {
-  const { port } = await cfg();
+  const { port, apiToken } = await chrome.storage.local.get({ ...DEFAULTS, apiToken: "" });
   const r = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: body ? "POST" : "GET",
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: { "x-gagadown-token": apiToken || "", ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(body ? 15000 : 1500),
   });
@@ -65,7 +101,12 @@ async function ping() {
 }
 
 async function handoff({ url, originalUrl, referrer, filename, size, mime, force }) {
+  const { enabled, consented } = await cfg();
+  if (!consented || !enabled || !await chrome.permissions.contains({ permissions: ["cookies", "webRequest"], origins: ["http://*/*", "https://*/*"] })) return "refused";
+  pruneRecent();
   const rec = recent.get(url) || (originalUrl && recent.get(originalUrl));
+  recent.delete(url);
+  if (originalUrl) recent.delete(originalUrl);
   if (rec && rec.method && rec.method !== "GET") return "refused";
   let cookie = null;
   let ua = navigator.userAgent;
@@ -144,10 +185,15 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(ping);
 // Lets GaGaDown show the extension as connected.
 chrome.alarms.create("ping", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener((a) => a.name === "ping" && ping());
+chrome.alarms.onAlarm.addListener((a) => {
+  pruneRecent();
+  if (a.name === "ping") ping();
+});
 ping();
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
+  const { enabled, consented } = await cfg();
+  if (!enabled || !consented) return;
   // An image inside a link reports both; the link usually points at a page, not the file.
   const url = (info.mediaType && info.srcUrl) || info.linkUrl || info.srcUrl;
   if (!url) return;
