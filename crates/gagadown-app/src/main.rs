@@ -553,14 +553,6 @@ struct Geo {
     flag: Option<egui::ColorImage>,
 }
 
-async fn ip_api(c: &reqwest::Client, host: &str) -> Option<(String, String)> {
-    let j: serde_json::Value = c.get(format!("http://ip-api.com/json/{host}?fields=status,countryCode,query")).send().await.ok()?.error_for_status().ok()?.json().await.ok()?;
-    if j["status"].as_str() != Some("success") {
-        return None;
-    }
-    Some((j["query"].as_str()?.to_string(), j["countryCode"].as_str()?.to_ascii_lowercase()))
-}
-
 /// uapis.cn standard source; key is optional (UAPI_KEY env var).
 async fn uapi(c: &reqwest::Client, host: &str) -> Option<(String, String)> {
     let mut req = c.get("https://uapis.cn/api/v1/network/ipinfo").query(&[("ip", host)]);
@@ -597,10 +589,7 @@ fn country_code(name: &str) -> Option<&'static str> {
 
 async fn lookup_geo(host: &str) -> Option<Geo> {
     let c = reqwest::Client::builder().timeout(Duration::from_secs(8)).build().ok()?;
-    let (ip, cc) = match ip_api(&c, host).await {
-        Some(x) => x,
-        None => uapi(&c, host).await?,
-    };
+    let (ip, cc) = uapi(&c, host).await?;
     let mut g = Geo { ip, cc, flag: None };
     if g.cc.len() == 2 {
         if let Ok(r) = c.get(format!("https://flagcdn.com/w40/{}.png", g.cc)).send().await {
@@ -2864,7 +2853,7 @@ impl App {
         Self::page_title(ui, "浏览器插件", None, &[], p);
         let ctx = ui.ctx().clone();
         ctx.request_repaint_after(Duration::from_millis(500));
-        let (mut act, mut copy, mut open, mut tab, mut copy_page) = (None, false, false, None, None);
+        let (mut act, mut copy, mut open, mut tab, mut copy_page, mut copy_token) = (None, false, false, None, None, false);
         let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
         let browsers = self.browsers.clone();
         let icons: Vec<_> = browsers.iter().map(|b| self.file_tex(&ctx, "b.exe", Some(&b.exe))).collect();
@@ -2942,6 +2931,15 @@ impl App {
                     act = Some(sel);
                 }
 
+                ui.add_space(10.0);
+                let (row, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+                text_line(ui.painter(), pos2(row.left(), row.center().y), Align2::LEFT_CENTER, "本机 API 配对码", font(12.5), p.weak, 120.0);
+                let copy_rect = Rect::from_min_size(pos2(row.right() - 58.0, row.center().y - 14.0), vec2(58.0, 28.0));
+                copy_token = btn_at(ui, copy_rect, Id::new("ext-copy-token"), "复制", false, p);
+                let token_rect = Rect::from_min_max(pos2(row.left() + 124.0, row.top()), pos2(copy_rect.left() - 8.0, row.bottom()));
+                ui.painter().rect(token_rect, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
+                text_line(ui.painter(), pos2(token_rect.left() + 8.0, token_rect.center().y), Align2::LEFT_CENTER, self.engine.extension_api_token(), FontId::monospace(10.0), p.text, token_rect.width() - 16.0);
+
                 let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
                 ui.add_space(24.0);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
@@ -2954,6 +2952,7 @@ impl App {
                     format!("在扩展页打开“{dev}”开关"),
                     format!("点击“{load}”"),
                     "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”".to_string(),
+                    "在扩展弹出窗口粘贴上方配对码，并完成数据处理同意".to_string(),
                 ];
                 let ind = 30.0;
                 for (n, s) in steps.iter().enumerate() {
@@ -3008,6 +3007,10 @@ impl App {
         if let Some(u) = copy_page {
             ctx.copy_text(u.to_string());
             self.toast("地址已复制", false);
+        }
+        if copy_token {
+            ctx.copy_text(self.engine.extension_api_token().to_string());
+            self.toast("配对码已复制", false);
         }
         if open {
             let _ = unpack_extension(self.engine.data_dir());

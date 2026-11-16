@@ -6,6 +6,7 @@
   :root { color-scheme: light dark; --fg: #1f1f1f; --weak: #8a8a8a; --bg: #fff; --head: #f3f3f3; --line: #e6e6e6; --hover: #f0f0f0; --off: #d4d4d8; --on: #2563eb; }
   @media (prefers-color-scheme: dark) { :root { --fg: #e6e6e6; --weak: #8f8f8f; --bg: #202020; --head: #2a2a2a; --line: #333; --hover: #2c2c2c; --off: #48484a; } }
   body { margin: 0; width: 240px; font: 13px "Microsoft YaHei", system-ui, sans-serif; color: var(--fg); background: var(--bg); user-select: none; }
+  [hidden] { display: none !important; }
   header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--head); }
   header img { width: 28px; height: 28px; border-radius: 50%; }
   .title { font-weight: 600; font-size: 14px; }
@@ -21,6 +22,16 @@
   .switch.on { background: var(--on); }
   .switch.on::after { left: 15px; }
   footer { padding: 8px 14px; color: var(--weak); font-size: 12px; }
+  .disclosure { padding: 12px 14px; line-height: 1.5; }
+  .disclosure p { margin: 0 0 9px; }
+  .disclosure label { display: flex; gap: 7px; align-items: flex-start; margin: 10px 0; }
+  button { border: 0; border-radius: 6px; padding: 8px 11px; color: white; background: var(--on); cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  .stop { margin: 8px 14px 4px; background: var(--off); color: var(--fg); }
+  .pair { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .pair label { display: block; margin-bottom: 5px; color: var(--weak); font-size: 12px; }
+  .pair input { box-sizing: border-box; width: 100%; padding: 6px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--fg); background: var(--bg); }
+  .pair button { margin-top: 6px; padding: 5px 8px; }
 </style>
 </head>
 <body>
@@ -28,10 +39,24 @@
   <img src="icons/48.png" alt="">
   <div><div class="title">GaGaDown</div><div class="state" id="stateText">检测中</div></div>
 </header>
+<div class="pair">
+  <label for="apiToken">桌面端配对码（在 GaGaDown 插件页复制）</label>
+  <input id="apiToken" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 64 位配对码">
+  <button id="saveToken">保存配对码</button>
+</div>
+<section class="disclosure" id="consent">
+  <p>启用前请了解：扩展会监测 HTTP/HTTPS 请求，以匹配你发起的下载，并把所选下载的 URL、来源页、Cookie、必要请求头和浏览器标识发送到本机 GaGaDown。登录凭据可能包含在 Cookie 或请求头中。</p>
+  <p>数据仅用于在本机继续下载，不发送给 GaGaDown 服务器。启用时会请求 cookies、webRequest 和所有 HTTP/HTTPS 网站的可选权限；你可以随时关闭或撤销权限。</p>
+  <label><input id="agree" type="checkbox">我已阅读并同意上述数据处理</label>
+  <button id="enable" disabled>同意并启用</button>
+</section>
+<section id="controls" hidden>
 <div class="item click" id="toggleRow">
   <svg viewBox="0 0 24 24"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14"/></svg>
   <span>接管浏览器下载</span><div id="toggle" class="switch"></div>
 </div>
+<button class="stop" id="disable">关闭并撤销网站访问权限</button>
+</section>
 <div class="item">
   <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h9"/></svg>
   <span>最小接管大小</span><span class="val" id="minSize">-</span>
