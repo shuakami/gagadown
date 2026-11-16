@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gagadown_core::config::{ProxyMode, Settings};
 use gagadown_core::engine::{CacheKind, CacheReport, Engine, PopupEvent};
 use gagadown_core::task::{now_secs, AddRequest, DeletedRecord, Phase, RemoveMode, Status, TaskView};
+#[cfg(debug_assertions)]
+use gagadown_core::task::SegView;
 use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,6 +19,37 @@ use uuid::Uuid;
 
 static ICON: &[u8] = include_bytes!("../../../assets/icon_256.rgba");
 const DEFAULT_ACCENT: Color32 = Color32::from_rgb(0, 120, 212);
+const PAGE_TRANSITION_SECS: f32 = 0.42;
+const PAGE_TRANSITION_OFFSET: f32 = 18.0;
+const PAGE_EXIT_END: f32 = 0.55;
+const PAGE_ENTER_START: f32 = 0.32;
+const NAV_INDICATOR_HEIGHT: f32 = 48.0;
+const NAV_INDICATOR_EXTEND: f32 = 24.0;
+#[cfg(debug_assertions)]
+const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
+#[cfg(not(debug_assertions))]
+const URL_INPUT_HINT: &str = "粘贴下载链接或搜索";
+
+/// Material's standard emphasized ease-in-out curve: cubic-bezier(0.4, 0, 0.2, 1).
+fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    let component = |u: f32, p1: f32, p2: f32| {
+        3.0 * (1.0 - u).powi(2) * u * p1 + 3.0 * (1.0 - u) * u.powi(2) * p2 + u.powi(3)
+    };
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..12 {
+        let mid = (lo + hi) * 0.5;
+        if component(mid, x1, x2) < t {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    component((lo + hi) * 0.5, y1, y2)
+}
+
+fn page_ease(t: f32) -> f32 {
+    cubic_bezier(t, 0.4, 0.0, 0.2, 1.0)
+}
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
@@ -107,6 +140,123 @@ enum Page {
     Settings,
 }
 
+#[derive(Clone)]
+struct PageTransition {
+    outgoing: Vec<egui::epaint::ClippedShape>,
+    started: Instant,
+    direction: f32,
+}
+
+impl PageTransition {
+    fn progress(&self, now: Instant) -> f32 {
+        let t = (now.duration_since(self.started).as_secs_f32() / PAGE_TRANSITION_SECS).clamp(0.0, 1.0);
+        page_ease(t)
+    }
+
+    fn exit_progress(&self, now: Instant) -> f32 {
+        page_ease((self.progress(now) / PAGE_EXIT_END).clamp(0.0, 1.0))
+    }
+
+    fn enter_progress(&self, now: Instant) -> f32 {
+        page_ease(((self.progress(now) - PAGE_ENTER_START) / (1.0 - PAGE_ENTER_START)).clamp(0.0, 1.0))
+    }
+}
+
+struct NavIndicator {
+    page: Option<Page>,
+    from_y: f32,
+    to_y: f32,
+    from_height: f32,
+    started: Instant,
+}
+
+impl NavIndicator {
+    fn new() -> Self {
+        Self {
+            page: None,
+            from_y: 0.0,
+            to_y: 0.0,
+            from_height: NAV_INDICATOR_HEIGHT,
+            started: Instant::now(),
+        }
+    }
+
+    fn position(&mut self, page: Page, target_y: f32, now: Instant) -> (f32, f32, bool) {
+        if self.page != Some(page) {
+            if self.page.is_some() {
+                let (current_y, current_height, _) = self.sample(now);
+                self.from_y = current_y;
+                self.from_height = current_height;
+                self.to_y = target_y;
+                self.started = now;
+            } else {
+                self.from_y = target_y;
+                self.to_y = target_y;
+                self.from_height = NAV_INDICATOR_HEIGHT;
+            }
+            self.page = Some(page);
+        } else if (self.to_y - target_y).abs() > 1.0 {
+            // A window resize moves fixed sidebar items without implying navigation.
+            self.from_y = target_y;
+            self.to_y = target_y;
+            self.from_height = NAV_INDICATOR_HEIGHT;
+        }
+        let (y, height, moving) = self.sample(now);
+        (y, height, moving)
+    }
+
+    fn sample(&mut self, now: Instant) -> (f32, f32, bool) {
+        // Keep the three edge actions sequential: extend one edge, translate as a
+        // rigid shape, then let the opposite edge catch up and contract.
+        let t = (now.duration_since(self.started).as_secs_f32() / PAGE_TRANSITION_SECS).clamp(0.0, 1.0);
+        let direction = if self.to_y >= self.from_y { 1.0 } else { -1.0 };
+        let start_top = self.from_y - self.from_height * 0.5;
+        let start_bottom = self.from_y + self.from_height * 0.5;
+        let target_top = self.to_y - NAV_INDICATOR_HEIGHT * 0.5;
+        let target_bottom = self.to_y + NAV_INDICATOR_HEIGHT * 0.5;
+        let (top, bottom) = if t < 0.35 {
+            let extend = page_ease(t / 0.35) * NAV_INDICATOR_EXTEND;
+            if direction > 0.0 {
+                (start_top, start_bottom + extend)
+            } else {
+                (start_top - extend, start_bottom)
+            }
+        } else if t < 0.75 {
+            let translate = page_ease((t - 0.35) / 0.40);
+            let (stretched_top, stretched_bottom) = if direction > 0.0 {
+                (start_top, start_bottom + NAV_INDICATOR_EXTEND)
+            } else {
+                (start_top - NAV_INDICATOR_EXTEND, start_bottom)
+            };
+            let leading_start = if direction > 0.0 { stretched_bottom } else { stretched_top };
+            let leading_target = if direction > 0.0 { target_bottom } else { target_top };
+            let offset = (leading_target - leading_start) * translate;
+            (stretched_top + offset, stretched_bottom + offset)
+        } else {
+            let contract = page_ease((t - 0.75) / 0.25);
+            if direction > 0.0 {
+                let translate = target_bottom - (start_bottom + NAV_INDICATOR_EXTEND);
+                let top_start = start_top + translate;
+                let top = top_start + (target_top - top_start) * contract;
+                (top, target_bottom)
+            } else {
+                let translate = target_top - (start_top - NAV_INDICATOR_EXTEND);
+                let bottom_start = start_bottom + translate;
+                let bottom = bottom_start + (target_bottom - bottom_start) * contract;
+                (target_top, bottom)
+            }
+        };
+        let y = (top + bottom) * 0.5;
+        let height = bottom - top;
+        let moving = t < 1.0;
+        if !moving {
+            self.from_y = self.to_y;
+            self.from_height = NAV_INDICATOR_HEIGHT;
+        }
+        (y, height, moving)
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Act {
     Pause,
@@ -126,6 +276,72 @@ enum Sec {
     Done,
 }
 
+#[cfg(debug_assertions)]
+struct MockDownloadPreview {
+    id: Uuid,
+    label: String,
+    started: Instant,
+    paused_at: Option<Instant>,
+    paused_duration: Duration,
+    created_at: u64,
+}
+
+#[cfg(debug_assertions)]
+impl MockDownloadPreview {
+    const DURATION: f32 = 8.0;
+    const SIZE: u64 = 64 * 1024 * 1024;
+
+    fn view(&self, now: Instant) -> TaskView {
+        let paused_for = self.paused_at.map_or(Duration::ZERO, |at| now.saturating_duration_since(at));
+        let elapsed = now
+            .saturating_duration_since(self.started)
+            .saturating_sub(self.paused_duration)
+            .saturating_sub(paused_for)
+            .as_secs_f32();
+        let progress = (elapsed / Self::DURATION).clamp(0.0, 1.0);
+        let downloaded = (progress * Self::SIZE as f32) as u64;
+        let running = progress < 1.0 && self.paused_at.is_none();
+        let connections = 8;
+        let chunk = Self::SIZE / connections as u64;
+        let segments = (0..connections)
+            .map(|i| {
+                let start = i as u64 * chunk;
+                let end = if i + 1 == connections { Self::SIZE } else { start + chunk };
+                SegView { start, done: downloaded.clamp(start, end), end, active: running && downloaded >= start && downloaded < end }
+            })
+            .collect();
+        let speed = if running { Self::SIZE as f64 / Self::DURATION as f64 } else { 0.0 };
+        TaskView {
+            id: self.id,
+            filename: format!("模拟下载 · {}.bin", self.label),
+            url: "mock://dev-preview/animation.bin".into(),
+            host: "dev-preview.local".into(),
+            dir: std::path::PathBuf::new(),
+            path: None,
+            size: Some(Self::SIZE),
+            downloaded,
+            speed,
+            eta_secs: running.then(|| ((Self::DURATION - elapsed).ceil() as u64).max(1)),
+            status: if self.paused_at.is_some() { Status::Paused } else if running { Status::Running } else { Status::Completed },
+            phase: running.then_some(Phase::Downloading),
+            error: None,
+            connections,
+            target: connections,
+            segments,
+            splits: 3,
+            history: Vec::new(),
+            route: Some("DEV MOCK".into()),
+            created_at: self.created_at,
+            finished_at: (progress >= 1.0).then_some(self.created_at + elapsed as u64),
+            next_retry_at: None,
+            file_missing: false,
+            ranges: true,
+            avg_speed: speed,
+            log: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Glyph {
     Min,
@@ -138,9 +354,15 @@ struct App {
     rt: tokio::runtime::Runtime,
     engine: Engine,
     page: Page,
+    page_transition: Option<PageTransition>,
+    page_snapshot: Vec<egui::epaint::ClippedShape>,
+    nav_indicator: NavIndicator,
     input: String,
     views: Vec<TaskView>,
+    #[cfg(debug_assertions)]
+    mock_preview: Option<MockDownloadPreview>,
     deleted: Vec<DeletedRecord>,
+    welcome_transition_pending: bool,
     last_refresh: Option<Instant>,
     selected: Option<Uuid>,
     removing: Option<Uuid>,
@@ -324,11 +546,6 @@ fn when(ts: u64) -> String {
     }
 }
 
-fn clock(ts: u64) -> String {
-    use chrono::{Local, TimeZone};
-    Local.timestamp_opt(ts as i64, 0).single().map(|t| t.format("%H:%M:%S").to_string()).unwrap_or_default()
-}
-
 #[derive(Clone, Default)]
 struct Geo {
     ip: String,
@@ -442,7 +659,6 @@ const EDGE_STORE_ID: Option<&str> = None;
 struct ExtGuide {
     browser: usize,
     since: u64,
-    dir: std::path::PathBuf,
 }
 
 #[derive(Clone)]
@@ -1446,8 +1662,54 @@ mod win {
 mod win {
     pub fn set_autostart(_on: bool) {}
 
-    pub fn app_path(_exe: &str) -> Option<std::path::PathBuf> {
-        None
+    pub fn app_path(exe: &str) -> Option<std::path::PathBuf> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::path::PathBuf;
+
+            // Browser integration is intentionally registry-based on Windows. On Linux,
+            // discover the executable from PATH instead; this covers distro packages,
+            // Chromium, and the usual Snap launchers (which live in /snap/bin).
+            let candidates: &[&str] = match exe {
+                "chrome.exe" => &[
+                    "google-chrome",
+                    "google-chrome-stable",
+                    "chromium",
+                    "chromium-browser",
+                ],
+                "msedge.exe" => &["microsoft-edge", "microsoft-edge-stable"],
+                _ => &[],
+            };
+            let path = std::env::var_os("PATH")?;
+            for dir in std::env::split_paths(&path) {
+                for candidate in candidates {
+                    let p = dir.join(candidate);
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+            }
+
+            // Some official packages install the browser under /opt without a PATH
+            // launcher (or have a customized PATH when started from a desktop entry).
+            let fixed: &[&str] = match exe {
+                "chrome.exe" => &[
+                    "/opt/google/chrome/google-chrome",
+                    "/snap/bin/chromium",
+                ],
+                "msedge.exe" => &[
+                    "/opt/microsoft/msedge/microsoft-edge",
+                    "/snap/bin/microsoft-edge",
+                ],
+                _ => &[],
+            };
+            fixed.iter().map(PathBuf::from).find(|p| p.is_file())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = exe;
+            None
+        }
     }
 
     pub fn register_extension(_reg: &str, _id: &str, _update_url: &str) -> bool {
@@ -1598,9 +1860,15 @@ impl App {
             rt,
             engine,
             page: Page::Downloads,
+            page_transition: None,
+            page_snapshot: Vec::new(),
+            nav_indicator: NavIndicator::new(),
             input: String::new(),
             views: Vec::new(),
+            #[cfg(debug_assertions)]
+            mock_preview: None,
             deleted: Vec::new(),
+            welcome_transition_pending: false,
             last_refresh: None,
             selected: None,
             removing: None,
@@ -1651,7 +1919,7 @@ impl App {
             Some(b) => {
                 ctx.copy_text(b.page.to_string());
                 let _ = std::process::Command::new(&b.exe).spawn();
-                self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs(), dir });
+                self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
             }
             None => {
                 ctx.copy_text(dir.display().to_string());
@@ -1675,6 +1943,22 @@ impl App {
         }
         self.last_refresh = Some(Instant::now());
         self.views = self.engine.views(400);
+        #[cfg(debug_assertions)]
+        if let Some(preview) = &self.mock_preview {
+            self.views.push(preview.view(Instant::now()));
+        }
+        if self.welcome_transition_pending {
+            if self.page == Page::Downloads && self.welcome_visible() {
+                self.welcome_transition_pending = false;
+                self.page_transition = Some(PageTransition {
+                    outgoing: self.page_snapshot.clone(),
+                    started: Instant::now(),
+                    direction: 0.0,
+                });
+            } else if self.page != Page::Downloads {
+                self.welcome_transition_pending = false;
+            }
+        }
         if self.page == Page::Trash {
             self.deleted = self.engine.deleted();
             self.deleted.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
@@ -1692,6 +1976,20 @@ impl App {
         if self.page == page {
             return;
         }
+        let now = Instant::now();
+        let rank = |page| match page {
+            Page::Downloads => 0,
+            Page::Trash => 1,
+            Page::Cache => 2,
+            Page::Extension => 3,
+            Page::Settings => 4,
+        };
+        let direction = if rank(page) > rank(self.page) { 1.0 } else { -1.0 };
+        self.page_transition = Some(PageTransition {
+            outgoing: self.page_snapshot.clone(),
+            started: now,
+            direction,
+        });
         self.page = page;
         self.last_refresh = None;
         match page {
@@ -1702,6 +2000,17 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn page_progress(&mut self, ctx: &egui::Context) -> f32 {
+        let Some(transition) = self.page_transition.as_ref() else { return 1.0 };
+        let progress = transition.progress(Instant::now());
+        if progress >= 1.0 {
+            self.page_transition = None;
+        } else {
+            ctx.request_repaint();
+        }
+        progress.clamp(0.0, 1.0)
     }
 
     fn add_input(&mut self) {
@@ -1716,6 +2025,23 @@ impl App {
             }
         }
         if added == 0 && !text.contains("://") {
+            #[cfg(debug_assertions)]
+            if !text.trim().is_empty() {
+                let label: String = text.trim().chars().take(24).collect();
+                let preview = MockDownloadPreview {
+                    id: Uuid::new_v4(),
+                    label,
+                    started: Instant::now(),
+                    paused_at: None,
+                    paused_duration: Duration::ZERO,
+                    created_at: now_secs(),
+                };
+                self.go(Page::Downloads);
+                self.mock_preview = Some(preview);
+                self.toast("开发预览：模拟下载已开始，不会写入文件", false);
+                self.last_refresh = None;
+                return;
+            }
             self.input = text;
         }
         if added > 0 {
@@ -1770,6 +2096,36 @@ impl App {
 
     fn act(&mut self, ctx: &egui::Context, v: &TaskView, a: Act) {
         let id = v.id;
+        #[cfg(debug_assertions)]
+        if self.mock_preview.as_ref().is_some_and(|preview| preview.id == id) {
+            match a {
+                Act::Remove => self.removing = Some(id),
+                Act::Pause => {
+                    if let Some(preview) = self.mock_preview.as_mut() {
+                        preview.paused_at = Some(Instant::now());
+                    }
+                }
+                Act::Resume => {
+                    if let Some(preview) = self.mock_preview.as_mut()
+                        && let Some(paused_at) = preview.paused_at.take()
+                    {
+                        preview.paused_duration += Instant::now().saturating_duration_since(paused_at);
+                    }
+                }
+                Act::Redownload => {
+                    if let Some(preview) = self.mock_preview.as_mut() {
+                        preview.started = Instant::now();
+                        preview.paused_at = None;
+                        preview.paused_duration = Duration::ZERO;
+                    }
+                }
+                Act::Open | Act::Reveal => self.toast("开发预览没有实际下载文件", false),
+                Act::CopyLink => self.toast("开发预览没有真实下载链接", false),
+                Act::ErrorInfo => {}
+            }
+            self.last_refresh = None;
+            return;
+        }
         match a {
             Act::Pause => self.engine.pause(id),
             Act::Resume => self.engine.resume(id),
@@ -1825,27 +2181,29 @@ impl App {
             ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
         }
 
-        let w = (r.width() * 0.42).clamp(280.0, 620.0);
-        let cb = Rect::from_center_size(r.center(), vec2(w, 24.0));
-        let id = Id::new("url");
-        let focus = ctx.memory(|m| m.has_focus(id));
-        ui.painter().rect(cb, CornerRadius::same(6), p.input, Stroke::new(1.0, if focus { p.accent } else { p.line }), StrokeKind::Inside);
-        ui.painter().text(pos2(cb.left() + 14.0, cb.center().y), Align2::CENTER_CENTER, ic::LINK, ifont(13.0), p.weak);
-        let go = Rect::from_min_size(pos2(cb.right() - 24.0, cb.top() + 2.0), vec2(22.0, 20.0));
-        let te = Rect::from_min_max(pos2(cb.left() + 28.0, cb.top()), pos2(go.left() - 4.0, cb.bottom()));
-        let resp = ui.put(
-            te,
-            egui::TextEdit::singleline(&mut self.input)
-                .id(id)
-                .frame(egui::Frame::NONE)
-                .font(font(12.5))
-                .vertical_align(egui::Align::Center)
-                .hint_text(RichText::new("粘贴下载链接或搜索").color(p.weak)),
-        );
-        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, "下载", p);
-        if enter || clicked {
-            self.add_input();
+        if !self.welcome_visible() {
+            let w = (r.width() * 0.42).clamp(280.0, 620.0);
+            let cb = Rect::from_center_size(r.center(), vec2(w, 24.0));
+            let id = Id::new("url");
+            let focus = ctx.memory(|m| m.has_focus(id));
+            ui.painter().rect(cb, CornerRadius::same(6), p.input, Stroke::new(1.0, if focus { p.accent } else { p.line }), StrokeKind::Inside);
+            ui.painter().text(pos2(cb.left() + 14.0, cb.center().y), Align2::CENTER_CENTER, ic::LINK, ifont(13.0), p.weak);
+            let go = Rect::from_min_size(pos2(cb.right() - 24.0, cb.top() + 2.0), vec2(22.0, 20.0));
+            let te = Rect::from_min_max(pos2(cb.left() + 28.0, cb.top()), pos2(go.left() - 4.0, cb.bottom()));
+            let resp = ui.put(
+                te,
+                egui::TextEdit::singleline(&mut self.input)
+                    .id(id)
+                    .frame(egui::Frame::NONE)
+                    .font(font(12.5))
+                    .vertical_align(egui::Align::Center)
+                    .hint_text(RichText::new(URL_INPUT_HINT).color(p.weak)),
+            );
+            let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, "下载", p);
+            if enter || clicked {
+                self.add_input();
+            }
         }
     }
 
@@ -1853,23 +2211,35 @@ impl App {
         let r = ui.max_rect();
         let active = self.views.iter().filter(|v| matches!(v.status, Status::Running | Status::Queued)).count();
         let items = [(Page::Downloads, ic::DOWNLOAD_SIMPLE, "下载"), (Page::Trash, ic::TRASH, "回收站"), (Page::Cache, ic::HARD_DRIVES, "缓存"), (Page::Extension, ic::PUZZLE_PIECE, "浏览器插件")];
+        let selected = self.page;
+        let mut indicator_y = None;
         for (i, (page, icon, tip)) in items.into_iter().enumerate() {
             let ir = Rect::from_min_size(pos2(r.left(), r.top() + 2.0 + i as f32 * 48.0), vec2(r.width(), 48.0));
+            if page == selected {
+                indicator_y = Some(ir.center().y);
+            }
             self.activity_item(ui, ir, page, icon, tip, if page == Page::Downloads { active } else { 0 }, p);
         }
         let sr = Rect::from_min_size(pos2(r.left(), r.bottom() - 50.0), vec2(r.width(), 48.0));
+        if selected == Page::Settings {
+            indicator_y = Some(sr.center().y);
+        }
         self.activity_item(ui, sr, Page::Settings, ic::GEAR_SIX, "设置", 0, p);
+        if let Some(target_y) = indicator_y {
+            let (center_y, height, moving) = self.nav_indicator.position(selected, target_y, Instant::now());
+            if moving {
+                ui.ctx().request_repaint();
+            }
+            let marker = Rect::from_center_size(pos2(r.left() + 1.0, center_y), vec2(2.0, height));
+            ui.painter().rect_filled(marker, CornerRadius::same(1), p.accent);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn activity_item(&mut self, ui: &mut Ui, r: Rect, page: Page, icon: &str, tip: &str, badge: usize, p: &Pal) {
         let resp = ui.interact(r, Id::new(("activity", tip)), Sense::click()).tip(tip);
-        let on = self.page == page;
         let pt = ui.painter();
-        if on {
-            pt.rect_filled(Rect::from_min_size(r.min, vec2(2.0, r.height())), 0.0, p.accent);
-        }
-        pt.text(r.center(), Align2::CENTER_CENTER, icon, ifont(22.0), if on || resp.hovered() { p.text } else { p.weak });
+        pt.text(r.center(), Align2::CENTER_CENTER, icon, ifont(22.0), if self.page == page || resp.hovered() { p.text } else { p.weak });
         if badge > 0 {
             let c = r.center() + vec2(9.0, 9.0);
             pt.circle_filled(c, 7.5, p.accent);
@@ -1969,10 +2339,14 @@ impl App {
     }
 
     fn downloads(&mut self, ui: &mut Ui, p: &Pal) {
+        if self.welcome_visible() {
+            self.welcome(ui, p);
+            return;
+        }
         let hero = self
             .selected
-            .and_then(|id| self.views.iter().find(|v| v.id == id && matches!(v.status, Status::Running | Status::Paused)))
-            .or_else(|| self.views.iter().filter(|v| v.status == Status::Running).max_by_key(|v| v.created_at))
+            .and_then(|id| self.views.iter().find(|v| v.id == id && !self.is_mock_view(id) && matches!(v.status, Status::Running | Status::Paused)))
+            .or_else(|| self.views.iter().filter(|v| v.status == Status::Running && !self.is_mock_view(v.id)).max_by_key(|v| v.created_at))
             .cloned();
         if let Some(h) = hero {
             self.hero(ui, &h, p);
@@ -1999,6 +2373,92 @@ impl App {
             self.section(ui, Sec::Done, &done, p);
             ui.add_space(12.0);
         });
+    }
+
+    fn welcome_visible(&self) -> bool {
+        self.views.is_empty() && self.handoff_fails.is_empty()
+    }
+
+    fn is_mock_view(&self, id: Uuid) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            return self.mock_preview.as_ref().is_some_and(|preview| preview.id == id);
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = id;
+            false
+        }
+    }
+
+    fn welcome(&mut self, ui: &mut Ui, p: &Pal) {
+        let bounds = ui.max_rect();
+        let center = bounds.center();
+        let logo_size = 88.0;
+        let logo = Rect::from_center_size(pos2(center.x, center.y - 126.0), vec2(logo_size, logo_size));
+        let tex = self.icon_tex(ui.ctx());
+        ui.painter().image(
+            tex.id(),
+            logo,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        ui.painter().text(
+            pos2(center.x, center.y - 48.0),
+            Align2::CENTER_CENTER,
+            "欢迎使用 GaGaDown",
+            bold(24.0),
+            p.text,
+        );
+        ui.painter().text(
+            pos2(center.x, center.y - 14.0),
+            Align2::CENTER_CENTER,
+            "粘贴下载链接，开始你的第一次下载",
+            font(14.0),
+            p.weak,
+        );
+
+        let width = (bounds.width() - 80.0).clamp(260.0, 480.0);
+        let field = Rect::from_center_size(pos2(center.x, center.y + 38.0), vec2(width, 46.0));
+        let id = Id::new("welcome_url");
+        let focused = ui.ctx().memory(|m| m.has_focus(id));
+        ui.painter().rect(
+            field,
+            CornerRadius::same(9),
+            p.input,
+            Stroke::new(1.0, if focused { p.accent } else { p.line }),
+            StrokeKind::Inside,
+        );
+        ui.painter().text(
+            pos2(field.left() + 22.0, field.center().y),
+            Align2::CENTER_CENTER,
+            ic::LINK,
+            ifont(16.0),
+            p.weak,
+        );
+        let button = Rect::from_min_size(pos2(field.right() - 42.0, field.top() + 5.0), vec2(34.0, 36.0));
+        let text = Rect::from_min_max(pos2(field.left() + 42.0, field.top() + 1.0), pos2(button.left() - 4.0, field.bottom() - 1.0));
+        let response = ui.put(
+            text,
+            egui::TextEdit::singleline(&mut self.input)
+                .id(id)
+                .frame(egui::Frame::NONE)
+                .font(font(14.0))
+                .vertical_align(egui::Align::Center)
+                .hint_text(RichText::new(URL_INPUT_HINT).color(p.weak)),
+        );
+        let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let clicked = icon_at(ui, button, Id::new("welcome_go"), ic::ARROW_DOWN, "开始下载", p);
+        if enter || clicked {
+            self.add_input();
+        }
+        ui.painter().text(
+            pos2(center.x, field.bottom() + 22.0),
+            Align2::CENTER_CENTER,
+            "支持直接粘贴链接并按 Enter 开始",
+            font(11.5),
+            p.weak,
+        );
     }
 
     fn section(&mut self, ui: &mut Ui, sec: Sec, items: &[TaskView], p: &Pal) {
@@ -2041,9 +2501,20 @@ impl App {
             });
             if let Some(mode) = pick {
                 let ids: Vec<Uuid> = items.iter().map(|v| v.id).collect();
+                if self.page == Page::Downloads && ids.len() == self.views.len() && self.handoff_fails.is_empty() {
+                    self.welcome_transition_pending = true;
+                }
                 for id in ids {
-                    let e = self.engine.clone();
-                    self.rt.spawn(async move { e.remove(id, mode).await });
+                    if self.is_mock_view(id) {
+                        #[cfg(debug_assertions)]
+                        {
+                            self.mock_preview = None;
+                        }
+                        self.views.retain(|view| view.id != id);
+                    } else {
+                        let e = self.engine.clone();
+                        self.rt.spawn(async move { e.remove(id, mode).await });
+                    }
                 }
                 self.selected = None;
                 self.last_refresh = None;
@@ -2128,6 +2599,11 @@ impl App {
 
     fn row(&mut self, ui: &mut Ui, v: &TaskView, p: &Pal) {
         let ctx = ui.ctx().clone();
+        let mock_item = self.is_mock_view(v.id);
+        let mut row_actions = Self::row_actions(v);
+        if mock_item {
+            row_actions.retain(|(_, _, action)| !matches!(action, Act::Open | Act::Reveal));
+        }
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
         let sel = self.selected == Some(v.id);
         let hovered = ui.rect_contains_pointer(r);
@@ -2150,7 +2626,7 @@ impl App {
         let mut act = None;
         if hovered {
             let mut bx = rx;
-            for (i, (icon, tip, a)) in Self::row_actions(v).into_iter().enumerate().rev() {
+            for (i, &(icon, tip, a)) in row_actions.iter().enumerate().rev() {
                 let br = Rect::from_min_size(pos2(bx - 26.0, r.center().y - 13.0), vec2(26.0, 26.0));
                 if icon_at(ui, br, resp.id.with(i), icon, tip, p) {
                     act = Some(a);
@@ -2190,11 +2666,11 @@ impl App {
         resp.context_menu(|ui| {
             ui.set_width(140.0);
             let mut items: Vec<(&str, &str, Act)> = Vec::new();
-            if v.status == Status::Completed && !v.file_missing {
+            if v.status == Status::Completed && !v.file_missing && !mock_item {
                 items.push((ic::FILE, "打开", Act::Open));
                 items.push((ic::FOLDER_OPEN, "打开所在文件夹", Act::Reveal));
             } else {
-                items.extend(Self::row_actions(v).into_iter().filter(|a| !matches!(a.2, Act::Remove)));
+                items.extend(row_actions.iter().copied().filter(|a| !matches!(a.2, Act::Remove)));
             }
             items.push((ic::LINK, "复制链接", Act::CopyLink));
             items.push((ic::TRASH, "删除", Act::Remove));
@@ -2466,7 +2942,7 @@ impl App {
                     act = Some(sel);
                 }
 
-                let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载已解压的扩展程序") };
+                let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
                 ui.add_space(24.0);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
                 text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装步骤", bold(13.5), p.text, w);
@@ -2855,6 +3331,7 @@ impl App {
             return;
         };
         let closing = self.rm_fade.closing;
+        let mock_item = self.is_mock_view(id);
         let name = self.views.iter().find(|v| v.id == id).map(|v| v.filename.clone()).unwrap_or_default();
         let mut close = false;
         let fill = if p.dark { rgb(37, 37, 38) } else { rgb(255, 255, 255) };
@@ -2868,9 +3345,18 @@ impl App {
             ui.add_space(2.0);
             ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.weak)).truncate());
             ui.add_space(14.0);
-            for (mode, label) in [(RemoveMode::KeepFiles, "只删除任务，保留文件"), (RemoveMode::TrashFiles, "文件移到回收站"), (RemoveMode::DeleteFiles, "彻底删除文件")] {
+            if mock_item {
+                ui.label(RichText::new("开发预览任务没有真实文件，只会移除这条模拟记录。").size(12.0).color(p.weak));
+                ui.add_space(8.0);
+            }
+            let options: &[(RemoveMode, &str)] = if mock_item {
+                &[(RemoveMode::KeepFiles, "移除模拟任务")]
+            } else {
+                &[(RemoveMode::KeepFiles, "只删除任务，保留文件"), (RemoveMode::TrashFiles, "文件移到回收站"), (RemoveMode::DeleteFiles, "彻底删除文件")]
+            };
+            for &(mode, label) in options {
                 let (r, resp) = ui.allocate_exact_size(vec2(340.0, 34.0), Sense::click());
-                let on = self.remove_mode == mode;
+                let on = mock_item || self.remove_mode == mode;
                 if on {
                     ui.painter().rect_filled(r, CornerRadius::same(6), p.accent.gamma_multiply(0.12));
                 } else if resp.hovered() {
@@ -2888,18 +3374,29 @@ impl App {
             let (row, _) = ui.allocate_exact_size(vec2(340.0, 30.0), Sense::hover());
             let ok = Rect::from_min_size(pos2(row.right() - 76.0, row.top()), vec2(76.0, 30.0));
             let cancel = Rect::from_min_size(pos2(ok.left() - 84.0, row.top()), vec2(76.0, 30.0));
-            let danger = self.remove_mode == RemoveMode::DeleteFiles;
+            let danger = !mock_item && self.remove_mode == RemoveMode::DeleteFiles;
             let okr = ui.interact(ok, Id::new("rm-ok"), Sense::click());
             let base = if danger { p.red } else { p.accent };
             ui.painter().rect_filled(ok, CornerRadius::same(6), if okr.hovered() { blend(base, Color32::BLACK, 0.88) } else { base });
-            ui.painter().text(ok.center(), Align2::CENTER_CENTER, "删除", font(13.0), Color32::WHITE);
+            ui.painter().text(ok.center(), Align2::CENTER_CENTER, if mock_item { "移除预览" } else { "删除" }, font(13.0), Color32::WHITE);
             let cr = ui.interact(cancel, Id::new("rm-cancel"), Sense::click());
             ui.painter().rect_filled(cancel, CornerRadius::same(6), p.text.gamma_multiply(if cr.hovered() { 0.1 } else { 0.06 }));
             ui.painter().text(cancel.center(), Align2::CENTER_CENTER, "取消", font(13.0), p.text);
             if !closing && (okr.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                let e = self.engine.clone();
-                let mode = self.remove_mode;
-                self.rt.spawn(async move { e.remove(id, mode).await });
+                if self.page == Page::Downloads && self.views.len() == 1 && self.handoff_fails.is_empty() {
+                    self.welcome_transition_pending = true;
+                }
+                if mock_item {
+                    #[cfg(debug_assertions)]
+                    {
+                        self.mock_preview = None;
+                    }
+                    self.views.retain(|view| view.id != id);
+                } else {
+                    let e = self.engine.clone();
+                    let mode = self.remove_mode;
+                    self.rt.spawn(async move { e.remove(id, mode).await });
+                }
                 if self.selected == Some(id) {
                     self.selected = None;
                 }
@@ -3252,6 +3749,19 @@ fn resize_edges(ctx: &egui::Context, r: Rect) {
     }
 }
 
+/// Move layout and hit targets together, keeping content clipped to its panel.
+fn page_content(ui: &mut Ui, progress: f32, direction: f32, add_contents: impl FnOnce(&mut Ui)) {
+    let bounds = ui.max_rect();
+    let offset = vec2(direction * PAGE_TRANSITION_OFFSET * (1.0 - progress), 0.0);
+    let scale = 0.985 + 0.015 * progress;
+    let size = bounds.size() * scale;
+    let rect = Rect::from_center_size(bounds.center() + offset, size);
+    let mut content = ui.new_child(egui::UiBuilder::new().id_salt("page_content").max_rect(rect));
+    content.set_clip_rect(ui.clip_rect().intersect(bounds));
+    content.set_opacity(progress);
+    add_contents(&mut content);
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -3295,6 +3805,14 @@ impl eframe::App for App {
         egui::Panel::top("title").exact_size(36.0).frame(egui::Frame::new().fill(p.chrome)).show(ui, |ui| self.title_bar(ui, &p));
         egui::Panel::bottom("status").exact_size(22.0).frame(egui::Frame::new().fill(p.chrome)).show(ui, |ui| self.status_bar(ui, &p));
         egui::Panel::left("activity").exact_size(48.0).resizable(false).frame(egui::Frame::new().fill(p.editor)).show(ui, |ui| self.activity_bar(ui, &p));
+        let page_layer = ui.layer_id();
+        let page_progress = self.page_transition.as_ref().map_or(1.0, |transition| {
+            let now = Instant::now();
+            transition.enter_progress(now)
+        });
+        self.page_progress(&ctx);
+        let direction = self.page_transition.as_ref().map_or(1.0, |transition| transition.direction);
+        let first_page_shape = ctx.graphics(|layers| layers.get(page_layer).map_or(0, |list| list.next_idx().0));
         if self.page == Page::Downloads {
             if let Some(v) = self.selected.and_then(|id| self.views.iter().find(|v| v.id == id)).cloned() {
                 egui::Panel::right("detail")
@@ -3302,16 +3820,36 @@ impl eframe::App for App {
                     .size_range(260.0..=560.0)
                     .resizable(true)
                     .frame(egui::Frame::new().fill(p.editor))
-                    .show(ui, |ui| self.detail(ui, &v, &p));
+                    .show(ui, |ui| page_content(ui, page_progress, direction, |ui| self.detail(ui, &v, &p)));
             }
         }
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(p.editor)).show(ui, |ui| match self.page {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(p.editor)).show(ui, |ui| page_content(ui, page_progress, direction, |ui| match self.page {
             Page::Downloads => self.downloads(ui, &p),
             Page::Trash => self.trash(ui, &p),
             Page::Cache => self.cache_page(ui, &p),
             Page::Extension => self.extension_page(ui, &p),
             Page::Settings => self.settings_page(ui, &p),
+        }));
+        self.page_snapshot = ctx.graphics(|layers| {
+            layers
+                .get(page_layer)
+                .map(|list| list.all_entries().skip(first_page_shape).cloned().collect())
+                .unwrap_or_default()
         });
+        if let Some(transition) = self.page_transition.as_ref() {
+            let eased = transition.exit_progress(Instant::now());
+            let scale = 1.0 - 0.005 * eased;
+            let offset = vec2(-direction * PAGE_TRANSITION_OFFSET * eased, 0.0);
+            let transform = egui::emath::TSTransform::new(full.center().to_vec2() * (1.0 - scale) + offset, scale);
+            let mut painter = ui.painter().with_clip_rect(full);
+            painter.set_opacity(1.0 - eased);
+            for clipped in &transition.outgoing {
+                let mut clipped = clipped.clone();
+                let clip = transform.mul_rect(clipped.clip_rect).intersect(full);
+                clipped.transform(transform);
+                painter.with_clip_rect(clip).add(clipped.shape);
+            }
+        }
         self.remove_modal(&ctx, &p);
         self.error_modal(&ctx, &p);
         self.show_toasts(&ctx, &p);
