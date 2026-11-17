@@ -22,7 +22,7 @@ GaGaDown 是一个专为速度设计、UI 美观的桌面下载器，原生支�
 - **连接数自适应**：边下边测速。速度能涨就增加并发，遇到限流自动退让，下次下载直接复用最佳配置。
 - **可靠续传**：基于实际落盘进度与 `If-Range` 校验。服务端文件若发生变化会自动重新下载，确保文件完整。
 - **精准接管**：探测到网页、登录鉴权或错误码时，自动将任务交还给浏览器，不盲目下载。
-- **浏览器扩展**：内置 Chrome / Edge 插件。GaGaDown 未启动时，浏览器原生下载照常工作。
+- **浏览器扩展**：Chrome 可从网上应用店安装，Edge 提供内置插件。GaGaDown 未启动时，浏览器原生下载照常工作。
 - **安静运行**：支持最小化到托盘与开机静默启动，后台下载完成时即时推送通知（后台特性目前仅限 Windows）。
 - **界面锐利**：Windows 端接入系统级 ClearType 字体渲染，文字显示清晰。
 
@@ -46,7 +46,13 @@ cd GagaDown-*-linux-x86_64
 
 ### 浏览器插件
 
-在浏览器地址栏打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启「开发者模式」。点击「加载未打包的扩展程序」，选择 GaGaDown 数据目录下的 `extension` 文件夹。可以在 GaGaDown 的插件页一键复制该路径。
+**Chrome**：在 GaGaDown 的「浏览器插件」页选择 Google Chrome，点击「打开商店」，从 [Chrome 网上应用店][chrome-extension-link] 添加 GaGaDown，无需开启开发者模式。
+
+**Edge**：暂时使用手动安装。在 GaGaDown 的「浏览器插件」页选择 Microsoft Edge，点击「安装插件」。在浏览器地址栏打开 `edge://extensions`，开启「开发人员模式」，点击「加载解压缩的扩展」，选择 GaGaDown 数据目录下的 `extension` 文件夹。插件页可复制该路径。
+
+安装后，在 GaGaDown 的插件页复制「本机 API 配对码」，打开浏览器的 GaGaDown 扩展弹窗，粘贴并点击「保存配对码」。配对成功后，先按提示单独授权浏览器权限，再阅读数据处理说明、勾选同意并点击「同意并启用」。若浏览器在授权期间关闭扩展面板，重新打开后会从权限授权后的步骤继续；未同意前不会接管下载。
+
+如果之前通过开发者模式安装过 Chrome 插件，请先停用或移除旧的未打包版本，再安装商店版本并重新配对，避免两份插件同时接管下载。商店版本后续由 Chrome 自动更新。
 
 ### 命令行
 
@@ -86,6 +92,7 @@ bash tools/package.sh
 [releases-link]: https://github.com/shuakami/gagadown/releases
 [issues-link]: https://github.com/shuakami/gagadown/issues
 [privacy-link]: docs/privacy-policy.md
+[chrome-extension-link]: https://chromewebstore.google.com/detail/dchaceihdgmmblaalchfafmnalhjpiip
 [stars-link]: https://github.com/shuakami/gagadown/stargazers
 [license-link]: LICENSE
 [github-release-shield]: https://img.shields.io/github/v/release/shuakami/gagadown?color=317cfe&labelColor=black&logo=github&style=flat-square

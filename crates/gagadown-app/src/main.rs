@@ -640,10 +640,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
     ("icons/128.png", include_bytes!("../../../extension/icons/128.png")),
 ];
 
-/// Store listing IDs. Once set, installing goes through the browser's own
-/// external-extension prompt instead of loading the unpacked folder.
-const CHROME_STORE_ID: Option<&str> = None;
-const EDGE_STORE_ID: Option<&str> = None;
+/// Browsers with a published listing install through their store page.
+const CHROME_STORE_URL: &str = "https://chromewebstore.google.com/detail/dchaceihdgmmblaalchfafmnalhjpiip";
 
 struct ExtGuide {
     browser: usize,
@@ -656,19 +654,16 @@ struct Browser {
     name: &'static str,
     exe: std::path::PathBuf,
     page: &'static str,
-    reg: &'static str,
-    store_id: Option<&'static str>,
-    update_url: &'static str,
-    store_page: &'static str,
+    store_url: Option<&'static str>,
 }
 
 fn browsers() -> Vec<Browser> {
     [
-        ("chrome", "Google Chrome", "chrome.exe", "chrome://extensions", r"Software\Google\Chrome\Extensions", CHROME_STORE_ID, "https://clients2.google.com/service/update2/crx", "https://chromewebstore.google.com/detail/"),
-        ("edge", "Microsoft Edge", "msedge.exe", "edge://extensions", r"Software\Microsoft\Edge\Extensions", EDGE_STORE_ID, "https://edge.microsoft.com/extensionwebstorebase/v1/crx", "https://microsoftedge.microsoft.com/addons/detail/"),
+        ("chrome", "Google Chrome", "chrome.exe", "chrome://extensions", Some(CHROME_STORE_URL)),
+        ("edge", "Microsoft Edge", "msedge.exe", "edge://extensions", None),
     ]
     .into_iter()
-    .filter_map(|(key, name, exe, page, reg, store_id, update_url, store_page)| Some(Browser { key, name, exe: win::app_path(exe)?, page, reg, store_id, update_url, store_page }))
+    .filter_map(|(key, name, exe, page, store_url)| Some(Browser { key, name, exe: win::app_path(exe)?, page, store_url }))
     .collect()
 }
 
@@ -1604,14 +1599,6 @@ mod win {
             .filter(|p| p.exists())
     }
 
-    /// Per-user external-extension entry; the browser asks the user to enable it on next start.
-    pub fn register_extension(reg: &str, id: &str, update_url: &str) -> bool {
-        winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-            .create_subkey(format!(r"{reg}\{id}"))
-            .and_then(|(k, _)| k.set_value("update_url", &update_url))
-            .is_ok()
-    }
-
     pub fn set_autostart(on: bool) {
         let Ok((k, _)) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run") else {
             return;
@@ -1699,10 +1686,6 @@ mod win {
             let _ = exe;
             None
         }
-    }
-
-    pub fn register_extension(_reg: &str, _id: &str, _update_url: &str) -> bool {
-        false
     }
 
     pub fn accent() -> Option<eframe::egui::Color32> {
@@ -1893,12 +1876,15 @@ impl App {
 
     fn install_extension(&mut self, ctx: &egui::Context, i: usize) {
         let b = self.browsers.get(i).cloned();
-        if let Some((b, id)) = b.as_ref().and_then(|b| Some((b, b.store_id?))) {
-            if win::register_extension(b.reg, id, b.update_url) {
-                let _ = std::process::Command::new(&b.exe).arg(format!("{}{id}", b.store_page)).spawn();
-                self.toast(format!("已添加到 {}，重启浏览器后点“启用”", b.name), false);
-                return;
+        if let Some((b, url)) = b.as_ref().and_then(|b| Some((b, b.store_url?))) {
+            match std::process::Command::new(&b.exe).arg(url).spawn() {
+                Ok(_) => {
+                    self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
+                    self.toast(format!("已在 {} 中打开插件商店页面", b.name), false);
+                }
+                Err(e) => self.toast(format!("打开 {} 失败：{e}，请复制下方商店地址手动打开", b.name), true),
             }
+            return;
         }
         let dir = match unpack_extension(self.engine.data_dir()) {
             Ok(d) => d,
@@ -1907,8 +1893,10 @@ impl App {
         match b {
             Some(b) => {
                 ctx.copy_text(b.page.to_string());
-                let _ = std::process::Command::new(&b.exe).spawn();
-                self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
+                match std::process::Command::new(&b.exe).spawn() {
+                    Ok(_) => self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() }),
+                    Err(e) => self.toast(format!("打开 {} 失败：{e}", b.name), true),
+                }
             }
             None => {
                 ctx.copy_text(dir.display().to_string());
@@ -2927,7 +2915,8 @@ impl App {
                 let (st, sc) = if on { ("已连接", p.green) } else { ("未连接", p.weak) };
                 text_line(&pt, pos2(tx, r.center().y + 11.0), Align2::LEFT_CENTER, st, font(12.0), sc, 200.0);
                 let br = Rect::from_min_size(pos2(r.right() - 112.0, r.center().y - 15.0), vec2(96.0, 30.0));
-                if btn_at(ui, br, Id::new(("ext-install", sel)), if on { "重新安装" } else { "安装插件" }, !on, p) {
+                let install_label = if b.store_url.is_some() { "打开商店" } else if on { "重新安装" } else { "安装插件" };
+                if btn_at(ui, br, Id::new(("ext-install", sel)), install_label, !on, p) {
                     act = Some(sel);
                 }
 
@@ -2940,20 +2929,34 @@ impl App {
                 ui.painter().rect(token_rect, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
                 text_line(ui.painter(), pos2(token_rect.left() + 8.0, token_rect.center().y), Align2::LEFT_CENTER, self.engine.extension_api_token(), FontId::monospace(10.0), p.text, token_rect.width() - 16.0);
 
-                let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
                 ui.add_space(24.0);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
                 text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装步骤", bold(13.5), p.text, w);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "点“安装插件”会打开浏览器，并复制好扩展页地址", font(12.0), p.weak, w);
+                let hint = if b.store_url.is_some() {
+                    "点“打开商店”前往 Chrome 网上应用店，安装后完成配对并启用"
+                } else {
+                    "点“安装插件”会打开浏览器，并复制好扩展页地址"
+                };
+                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, hint, font(12.0), p.weak, w);
                 ui.add_space(8.0);
-                let steps = [
-                    format!("在浏览器地址栏粘贴 {} 并回车", b.page),
-                    format!("在扩展页打开“{dev}”开关"),
-                    format!("点击“{load}”"),
-                    "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”".to_string(),
-                    "在扩展弹出窗口粘贴上方配对码，并完成数据处理同意".to_string(),
-                ];
+                let steps = if b.store_url.is_some() {
+                    vec![
+                        "在商店页面点击“添加至 Chrome”，并确认添加扩展程序".to_string(),
+                        "在浏览器工具栏的扩展菜单中打开 GaGaDown".to_string(),
+                        "将上方配对码粘贴到扩展弹窗，点击“保存配对码”".to_string(),
+                        "阅读数据处理说明，勾选同意并点击“同意并启用”，确认权限".to_string(),
+                    ]
+                } else {
+                    let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
+                    vec![
+                        format!("在浏览器地址栏粘贴 {} 并回车", b.page),
+                        format!("在扩展页打开“{dev}”开关"),
+                        format!("点击“{load}”"),
+                        "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”".to_string(),
+                        "在扩展弹出窗口粘贴上方配对码，并完成数据处理同意".to_string(),
+                    ]
+                };
                 let ind = 30.0;
                 for (n, s) in steps.iter().enumerate() {
                     let (r, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
@@ -2961,24 +2964,30 @@ impl App {
                     let c = pos2(r.left() + 10.0, r.center().y);
                     pt.circle_filled(c, 10.0, p.accent.gamma_multiply(0.14));
                     pt.text(c, Align2::CENTER_CENTER, (n + 1).to_string(), font(11.5), p.accent);
-                    let tw = if n == 0 { w - ind - 70.0 } else { w - ind };
+                    let tw = if n == 0 { w - ind - 88.0 } else { w - ind };
                     text_line(pt, pos2(r.left() + ind, r.center().y), Align2::LEFT_CENTER, s, font(13.0), p.text, tw);
                     if n == 0 {
-                        let cb = Rect::from_min_size(pos2(r.right() - 58.0, r.center().y - 14.0), vec2(58.0, 28.0));
-                        if btn_at(ui, cb, Id::new("ext-copy-page"), "复制", false, p) {
-                            copy_page = Some(b.page);
+                        let cb = Rect::from_min_size(pos2(r.right() - 76.0, r.center().y - 14.0), vec2(76.0, 28.0));
+                        if btn_at(ui, cb, Id::new("ext-copy-page"), "复制地址", false, p) {
+                            copy_page = Some(b.store_url.unwrap_or(b.page));
                         }
                     }
                 }
-                ui.add_space(4.0);
-                let (row, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
-                let r = Rect::from_min_max(pos2(row.left() + ind, row.top()), row.max);
-                ui.painter().rect(r, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
-                let ob = Rect::from_min_size(pos2(r.right() - 98.0, r.top() + 4.0), vec2(94.0, 28.0));
-                let cb = Rect::from_min_size(pos2(ob.left() - 62.0, r.top() + 4.0), vec2(58.0, 28.0));
-                text_line(ui.painter(), pos2(r.left() + 12.0, r.center().y), Align2::LEFT_CENTER, &path_s, FontId::monospace(11.5), p.text, cb.left() - r.left() - 24.0);
-                copy = btn_at(ui, cb, Id::new("ext-copy"), "复制", false, p);
-                open = btn_at(ui, ob, Id::new("ext-open"), "打开文件夹", false, p);
+                if b.store_url.is_some() {
+                    ui.add_space(8.0);
+                    let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
+                    text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "已安装开发者版本？请先停用或移除旧插件，再安装商店版本并重新配对。", font(12.0), p.weak, w);
+                } else {
+                    ui.add_space(4.0);
+                    let (row, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
+                    let r = Rect::from_min_max(pos2(row.left() + ind, row.top()), row.max);
+                    ui.painter().rect(r, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
+                    let ob = Rect::from_min_size(pos2(r.right() - 98.0, r.top() + 4.0), vec2(94.0, 28.0));
+                    let cb = Rect::from_min_size(pos2(ob.left() - 62.0, r.top() + 4.0), vec2(58.0, 28.0));
+                    text_line(ui.painter(), pos2(r.left() + 12.0, r.center().y), Align2::LEFT_CENTER, &path_s, FontId::monospace(11.5), p.text, cb.left() - r.left() - 24.0);
+                    copy = btn_at(ui, cb, Id::new("ext-copy"), "复制", false, p);
+                    open = btn_at(ui, ob, Id::new("ext-open"), "打开文件夹", false, p);
+                }
                 if since.is_none() {
                     return;
                 }
@@ -3101,18 +3110,23 @@ impl App {
         let y = r.top() + 126.0;
         let mut lx = x;
         let repo = "https://github.com/shuakami/gagadown";
+        let privacy = "https://github.com/shuakami/gagadown/blob/main/docs/privacy-policy.md";
         let dir = self.engine.data_dir().to_path_buf();
-        for (key, label, tip) in [("about_dir", "打开数据目录", "设置、任务记录和日志都在这里"), ("about_repo", "GitHub", repo)] {
+        for (key, label, tip) in [
+            ("about_dir", "打开数据目录", "设置、任务记录和日志都在这里"),
+            ("about_repo", "GitHub", repo),
+            ("about_privacy", "隐私政策", privacy),
+        ] {
             let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, label, font(12.5), p.accent, w);
             let resp = ui.interact(lr.expand(3.0), Id::new(key), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).tip(tip);
             if resp.hovered() {
                 pt.hline(lr.x_range(), lr.bottom() + 1.0, Stroke::new(1.0, p.accent.gamma_multiply(0.6)));
             }
             if resp.clicked() {
-                if key == "about_repo" {
-                    open_path(Path::new(repo));
-                } else {
+                if key == "about_dir" {
                     open_path(&dir);
+                } else {
+                    open_path(Path::new(tip));
                 }
             }
             lx = lr.right() + 18.0;
