@@ -26,21 +26,53 @@ fn origin_ok(o: &str) -> bool {
     })
 }
 
-async fn guard(State(engine): State<Engine>, req: Request, next: Next) -> Response {
-    let Some(o) = req.headers().get("origin").and_then(|v| v.to_str().ok()) else {
-        return (StatusCode::FORBIDDEN, "origin required").into_response();
+fn validate_request(
+    origin: Option<&str>,
+    token: Option<&str>,
+    preflight: bool,
+    expected_token: &str,
+) -> Result<(), (StatusCode, &'static str)> {
+    match origin {
+        Some(o) if !origin_ok(o) => return Err((StatusCode::FORBIDDEN, "origin not allowed")),
+        None if preflight => return Err((StatusCode::FORBIDDEN, "origin required")),
+        _ => {}
+    }
+
+    if preflight {
+        return Ok(());
+    }
+
+    let Some(token) = token else {
+        return Err((StatusCode::UNAUTHORIZED, "pairing required"));
     };
-    if !origin_ok(o) {
-        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    if !bool::from(token.as_bytes().ct_eq(expected_token.as_bytes())) {
+        return Err((StatusCode::UNAUTHORIZED, "invalid pairing token"));
+    }
+    Ok(())
+}
+
+async fn guard(State(engine): State<Engine>, req: Request, next: Next) -> Response {
+    let origin = match req.headers().get("origin") {
+        Some(value) => match value.to_str() {
+            Ok(origin) => Some(origin),
+            Err(_) => return (StatusCode::FORBIDDEN, "origin not allowed").into_response(),
+        },
+        None => None,
+    };
+    let token = req
+        .headers()
+        .get("x-gagadown-token")
+        .and_then(|v| v.to_str().ok());
+    if let Err((status, message)) = validate_request(
+        origin,
+        token,
+        req.method() == Method::OPTIONS,
+        engine.extension_api_token(),
+    ) {
+        return (status, message).into_response();
     }
     if req.method() == Method::OPTIONS {
         return next.run(req).await;
-    }
-    let Some(token) = req.headers().get("x-gagadown-token").and_then(|v| v.to_str().ok()) else {
-        return (StatusCode::UNAUTHORIZED, "pairing required").into_response();
-    };
-    if !bool::from(token.as_bytes().ct_eq(engine.extension_api_token().as_bytes())) {
-        return (StatusCode::UNAUTHORIZED, "invalid pairing token").into_response();
     }
     next.run(req).await
 }
@@ -252,7 +284,7 @@ pub async fn serve(engine: Engine, port: u16) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::origin_ok;
+    use super::{StatusCode, origin_ok, validate_request};
 
     #[test]
     fn accepts_only_extension_origins() {
@@ -262,5 +294,42 @@ mod tests {
         assert!(!origin_ok("https://example.com"));
         assert!(!origin_ok("chrome-extension://id/path"));
         assert!(!origin_ok("chrome-extension://"));
+    }
+
+    #[test]
+    fn missing_origin_still_requires_pairing_token() {
+        assert_eq!(
+            validate_request(None, Some("secret"), false, "secret"),
+            Ok(())
+        );
+        assert_eq!(
+            validate_request(None, None, false, "secret"),
+            Err((StatusCode::UNAUTHORIZED, "pairing required"))
+        );
+        assert_eq!(
+            validate_request(None, Some("wrong"), false, "secret"),
+            Err((StatusCode::UNAUTHORIZED, "invalid pairing token"))
+        );
+    }
+
+    #[test]
+    fn preflight_and_present_origins_remain_restricted() {
+        assert_eq!(
+            validate_request(None, None, true, "secret"),
+            Err((StatusCode::FORBIDDEN, "origin required"))
+        );
+        assert_eq!(
+            validate_request(Some("https://example.com"), Some("secret"), false, "secret"),
+            Err((StatusCode::FORBIDDEN, "origin not allowed"))
+        );
+        assert_eq!(
+            validate_request(
+                Some("chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"),
+                None,
+                true,
+                "secret",
+            ),
+            Ok(())
+        );
     }
 }

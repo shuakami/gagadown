@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GaGaDown",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "使用 GaGaDown 接管浏览器下载",
   "permissions": ["downloads", "downloads.ui", "contextMenus", "storage", "alarms"],
   "optional_permissions": ["cookies", "webRequest"],

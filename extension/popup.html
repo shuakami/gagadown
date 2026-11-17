@@ -25,13 +25,16 @@
   .disclosure { padding: 12px 14px; line-height: 1.5; }
   .disclosure p { margin: 0 0 9px; }
   .disclosure label { display: flex; gap: 7px; align-items: flex-start; margin: 10px 0; }
-  button { border: 0; border-radius: 6px; padding: 8px 11px; color: white; background: var(--on); cursor: pointer; }
+  button { box-sizing: border-box; min-height: 36px; border: 0; border-radius: 6px; padding: 8px 11px; color: white; background: var(--on); font: inherit; cursor: pointer; }
   button:disabled { opacity: .45; cursor: default; }
+  .pair button, .disclosure button { display: block; width: 100%; }
   .stop { margin: 8px 14px 4px; background: var(--off); color: var(--fg); }
+  .secondary { background: var(--off); color: var(--fg); }
   .pair { padding: 10px 14px; border-bottom: 1px solid var(--line); }
   .pair label { display: block; margin-bottom: 5px; color: var(--weak); font-size: 12px; }
   .pair input { box-sizing: border-box; width: 100%; padding: 6px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--fg); background: var(--bg); }
-  .pair button { margin-top: 6px; padding: 5px 8px; }
+  .pair button { margin-top: 6px; }
+  .pair .pair-action { margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -39,12 +42,21 @@
   <img src="icons/48.png" alt="">
   <div><div class="title">GaGaDown</div><div class="state" id="stateText">检测中</div></div>
 </header>
-<div class="pair">
-  <label for="apiToken">桌面端配对码（在 GaGaDown 插件页复制）</label>
-  <input id="apiToken" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 64 位配对码">
-  <button id="saveToken">保存配对码</button>
-</div>
-<section class="disclosure" id="consent">
+<section class="pair" id="pairStep" hidden>
+  <div id="pairIntro">输入桌面端配对码以连接 GaGaDown。</div>
+  <div id="reconnectNotice" hidden>未连接到桌面程序，请确认 GaGaDown 正在运行。</div>
+  <div id="pairEditor">
+    <label for="apiToken">桌面端配对码（在 GaGaDown 插件页复制）</label>
+    <input id="apiToken" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 64 位配对码">
+    <button id="saveToken">保存配对码</button>
+  </div>
+  <button id="editPairing" class="pair-action secondary" hidden>修改配对码</button>
+</section>
+<section class="disclosure" id="permissionStep" hidden>
+  <p>下一步需要允许 GaGaDown 访问网站下载请求，并读取继续下载所需的 Cookie 和请求头。授权后仍需阅读并同意数据处理说明，插件才会开始接管下载。</p>
+  <button id="authorize">授权浏览器权限</button>
+</section>
+<section class="disclosure" id="consent" hidden>
   <p>启用前请了解：扩展会监测 HTTP/HTTPS 请求，以匹配你发起的下载，并把所选下载的 URL、来源页、Cookie、必要请求头和浏览器标识发送到本机 GaGaDown。登录凭据可能包含在 Cookie 或请求头中。</p>
   <p>数据仅用于在本机继续下载，不发送给 GaGaDown 服务器。启用时会请求 cookies、webRequest 和所有 HTTP/HTTPS 网站的可选权限；你可以随时关闭或撤销权限。</p>
   <label><input id="agree" type="checkbox">我已阅读并同意上述数据处理</label>
@@ -57,10 +69,6 @@
 </div>
 <button class="stop" id="disable">关闭并撤销网站访问权限</button>
 </section>
-<div class="item">
-  <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h9"/></svg>
-  <span>最小接管大小</span><span class="val" id="minSize">-</span>
-</div>
 <footer id="ver"></footer>
 <script src="popup.js"></script>
 </body>

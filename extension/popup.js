@@ -1,30 +1,92 @@
 const toggle = document.getElementById("toggle");
 const stateText = document.getElementById("stateText");
-const minSize = document.getElementById("minSize");
 const consent = document.getElementById("consent");
 const controls = document.getElementById("controls");
 const enable = document.getElementById("enable");
 const disable = document.getElementById("disable");
 const apiTokenInput = document.getElementById("apiToken");
-const size = (n) => (n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(n % (1 << 20) ? 1 : 0)} MB` : `${Math.round(n / 1024)} KB`);
+const pairStep = document.getElementById("pairStep");
+const pairIntro = document.getElementById("pairIntro");
+const reconnectNotice = document.getElementById("reconnectNotice");
+const pairEditor = document.getElementById("pairEditor");
+const editPairing = document.getElementById("editPairing");
+const permissionStep = document.getElementById("permissionStep");
+const authorize = document.getElementById("authorize");
 const hosts = { permissions: ["cookies", "webRequest"], origins: ["http://*/*", "https://*/*"] };
+let pairingCheckId = 0;
+let renderId = 0;
+let appConnected = false;
+let pairingCheckComplete = false;
+let editingPairing = false;
+
+async function refreshPairingStatus(failureText) {
+  const checkId = ++pairingCheckId;
+  stateText.textContent = "正在检测桌面程序…";
+  try {
+    const j = await chrome.runtime.sendMessage("ping");
+    if (checkId !== pairingCheckId) return;
+    appConnected = j?.app === "gagadown";
+    pairingCheckComplete = true;
+    stateText.textContent = appConnected ? "已连接" : failureText;
+    if (appConnected) await chrome.storage.local.set({ pairingVerified: true });
+    render();
+  } catch {
+    if (checkId === pairingCheckId) {
+      appConnected = false;
+      pairingCheckComplete = true;
+      stateText.textContent = failureText;
+      render();
+    }
+  }
+}
 
 async function render() {
-  const { enabled, consented, minSize: m } = await chrome.storage.local.get({ enabled: false, consented: false, minSize: null });
+  const currentRenderId = ++renderId;
+  const { enabled, consented, pairingVerified, apiToken } = await chrome.storage.local.get({ enabled: false, consented: false, pairingVerified: false, apiToken: "" });
   const granted = await chrome.permissions.contains(hosts);
+  if (currentRenderId !== renderId) return;
   const active = !!enabled && !!consented && granted;
-  consent.hidden = !!consented;
-  controls.hidden = !consented;
+  const hasPairingCode = !!apiToken;
+  const hasVerifiedPairing = !!pairingVerified && !!apiToken;
+  const disconnected = hasVerifiedPairing && pairingCheckComplete && !appConnected;
+  const needsPairing = !hasPairingCode || (pairingCheckComplete && !appConnected && !hasVerifiedPairing);
+  pairStep.hidden = !disconnected && !needsPairing;
+  pairIntro.hidden = disconnected;
+  reconnectNotice.hidden = !disconnected;
+  pairEditor.hidden = (disconnected && !editingPairing) || (!needsPairing && !disconnected);
+  editPairing.hidden = !disconnected || editingPairing;
+  permissionStep.hidden = !hasPairingCode || granted || !!consented;
+  consent.hidden = !hasPairingCode || !pairingCheckComplete || !appConnected || !granted || !!consented;
+  controls.hidden = !consented || !appConnected || !granted;
   toggle.classList.toggle("on", active);
   enable.disabled = !document.getElementById("agree").checked;
-  if (typeof m === "number") minSize.textContent = size(m);
 }
 
 document.getElementById("agree").addEventListener("change", render);
+editPairing.addEventListener("click", () => {
+  editingPairing = true;
+  pairEditor.hidden = false;
+  editPairing.hidden = true;
+  apiTokenInput.focus();
+});
+authorize.addEventListener("click", async () => {
+  const granted = await chrome.permissions.request(hosts);
+  if (!granted) {
+    stateText.textContent = "未获得浏览器权限，接管功能尚未启用";
+    render();
+    return;
+  }
+  const { apiToken } = await chrome.storage.local.get({ apiToken: "" });
+  if (apiToken) {
+    await refreshPairingStatus("配对失败，请检查桌面程序或修改配对码");
+  } else {
+    stateText.textContent = "权限已授权，请输入桌面端配对码";
+    render();
+  }
+});
 enable.addEventListener("click", async () => {
   if (!document.getElementById("agree").checked) return;
-  const granted = await chrome.permissions.request(hosts);
-  if (!granted) return;
+  if (!await chrome.permissions.contains(hosts) || !appConnected) return;
   await chrome.storage.local.set({ consented: true, enabled: true });
   render();
 });
@@ -52,11 +114,28 @@ document.getElementById("saveToken").addEventListener("click", async () => {
     return;
   }
   await chrome.storage.local.set({ apiToken });
-  const j = await chrome.runtime.sendMessage("ping");
-  stateText.textContent = j ? "已连接" : "配对失败，请检查配对码和桌面程序";
+  await chrome.storage.local.set({ pairingVerified: false });
+  editingPairing = false;
+  appConnected = false;
+  pairingCheckComplete = false;
+  const granted = await chrome.permissions.contains(hosts);
+  if (granted) {
+    await refreshPairingStatus("配对失败，请检查桌面程序或修改配对码");
+  } else {
+    stateText.textContent = "配对码已保存，请先授权浏览器权限";
+    render();
+  }
 });
-render();
-chrome.runtime.sendMessage("ping").then((j) => {
-  stateText.textContent = j ? "已连接" : "未配对或桌面程序未运行";
-  if (j && typeof j.takeover_min_size === "number") minSize.textContent = size(j.takeover_min_size);
-});
+async function initialize() {
+  const { apiToken } = await chrome.storage.local.get({ apiToken: "" });
+  apiTokenInput.value = apiToken;
+  const granted = await chrome.permissions.contains(hosts);
+  if (apiToken && granted) {
+    await refreshPairingStatus("未连接到桌面程序，请检查客户端");
+  } else {
+    pairingCheckComplete = !apiToken;
+    stateText.textContent = apiToken ? "配对码已保存，请先授权浏览器权限" : "尚未配对";
+    render();
+  }
+}
+initialize();
