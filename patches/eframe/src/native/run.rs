@@ -199,12 +199,18 @@ impl<T: WinitApp> WinitAppWrapper<T> {
                 }
 
                 if let Some(window) = self.winit_app.window(*window_id) {
+                    let hidden = is_invisible_or_minimized(&window);
+                    log::trace!(target: "gagadown_ui",
+                        "redraw_due window={window_id:?} dispatch={} late_ms={}",
+                        if hidden { "direct" } else { "winit" },
+                        now.saturating_duration_since(*repaint_time).as_millis(),
+                    );
                     // On Windows, invisible windows don't receive RedrawRequested
                     // events, so pending viewport commands (e.g. Visible(true)) would
                     // never be processed. We collect these windows to paint them
                     // directly below.
                     // See: https://github.com/emilk/egui/issues/5229
-                    if is_invisible_or_minimized(&window) {
+                    if hidden {
                         invisible_window_ids.push(*window_id);
                     } else {
                         log::trace!("request_redraw for {window_id:?}");
@@ -320,6 +326,10 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
                         .winit_app
                         .egui_ctx()
                         .map_or(0, |ctx| ctx.cumulative_pass_nr_for(viewport_id));
+                    log::trace!(target: "gagadown_ui",
+                        "repaint_request viewport={viewport_id:?} pass={cumulative_pass_nr} current_pass={current_pass_nr} overdue_ms={}",
+                        Instant::now().saturating_duration_since(when).as_millis(),
+                    );
                     if current_pass_nr == cumulative_pass_nr
                         || current_pass_nr == cumulative_pass_nr + 1
                     {
@@ -372,6 +382,17 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
     ) {
         profiling::function_scope!(egui_winit::short_window_event_description(&event));
         let _stage = crate::stall::Stage::enter(crate::stall::EVENT);
+        if matches!(
+            event,
+            winit::event::WindowEvent::RedrawRequested
+                | winit::event::WindowEvent::MouseInput { .. }
+                | winit::event::WindowEvent::CloseRequested
+                | winit::event::WindowEvent::Occluded(_)
+        ) {
+            log::trace!(target: "gagadown_ui", "window_event window={window_id:?} event={}",
+                egui_winit::short_window_event_description(&event),
+            );
+        }
 
         // Nb: Make sure this guard is dropped after this function returns.
         event_loop_context::with_event_loop_context(event_loop, move || {

@@ -23,7 +23,7 @@ GaGaDown 是一个专为速度设计、UI 美观的桌面下载器，原生支�
 - **可靠续传**：基于实际落盘进度与 `If-Range` 校验。服务端文件若发生变化会自动重新下载，确保文件完整。
 - **精准接管**：探测到网页、登录鉴权或错误码时，自动将任务交还给浏览器，不盲目下载。
 - **浏览器扩展**：Chrome 可从网上应用店安装，Edge 提供内置插件。GaGaDown 未启动时，浏览器原生下载照常工作。
-- **安静运行**：支持最小化到托盘与开机静默启动，后台下载完成时即时推送通知（后台特性目前仅限 Windows）。
+- **安静运行**：Windows 与支持 StatusNotifier 托盘的 Linux 桌面可将主窗口收到托盘。开机静默启动和下载完成通知目前仅支持 Windows。
 - **界面锐利**：Windows 端接入系统级 ClearType 字体渲染，文字显示清晰。
 
 ## 快速开始
@@ -43,6 +43,20 @@ cd GagaDown-*-linux-x86_64
 ```
 
 需要 Vulkan 或 OpenGL 显卡驱动，X11 和 Wayland 均可运行。
+
+### Flatpak
+
+Flatpak 支持目前为预览。安装 `flatpak-builder` 后，可在仓库根目录从 manifest 构建并安装到当前用户：
+
+```bash
+flatpak-builder --user --install-deps-from=flathub --install --force-clean \
+  target/flatpak-build packaging/flatpak/dev.gagadown.GaGaDown.yml
+flatpak run dev.gagadown.GaGaDown
+```
+
+上述命令需要已配置名为 `flathub` 的远程源以安装构建依赖。当前 manifest 使用 Freedesktop `25.08`，固定到 `v0.1.7` 的源码归档并应用 `gagadown-linux.patch`；更新源码 tag 时，也要同步检查 SHA-256、补丁和 `cargo-sources.json`。
+
+Flatpak 默认可访问系统下载目录，其他目录可通过系统文件选择器授权。打开扩展商店会交给系统默认浏览器。此预览包强制使用 X11，在 Wayland 桌面通过 XWayland 运行。
 
 ### 浏览器插件
 
@@ -85,6 +99,21 @@ bash tools/package.sh
 ## 许可证
 
 [GPL-3.0][license-link]
+
+## Known issue
+
+在 Linux 上（原生包和 Flatpak 均有报告），主窗口留在当前工作区前台时，下载进度小窗通常响应正常。将主窗口移到其他工作区后，小窗可能出现数秒的交互延迟；主窗口退到托盘后，小窗可能无响应，恢复主窗口时也可能出现透明且不可交互的窗口。此时下载仍可能继续。根因待排查。
+
+用包含诊断代码的构建复现时，先正常退出已有实例，再选择对应的启动命令。日志写入标准错误，默认不开启：
+
+```bash
+# Flatpak
+flatpak run --env=GAGADOWN_UI_TRACE=1 dev.gagadown.GaGaDown 2> /tmp/gagadown-ui.log
+# 本地构建，强制走 X11 以对照 Flatpak
+GAGADOWN_UI_TRACE=1 GAGADOWN_FORCE_X11=1 ./target/release/GagaDown 2> /tmp/gagadown-ui.log
+```
+
+抓取一段从主窗口在前台到切换工作区或退到托盘、随后小窗卡顿的日志，并记下触发时刻。新增诊断包含窗口事件、重绘转发及 GPU 提交和呈现耗时，不记录下载 URL 或文件名。
 
 <!-- LINK GROUP -->
 

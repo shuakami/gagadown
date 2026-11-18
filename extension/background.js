@@ -168,11 +168,12 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
         taken = (await handoff({ url, originalUrl: item.url, referrer: item.referrer, filename: item.filename, size, mime: item.mime })) === "ok";
       }
     } catch {}
+    // Chromium looks up the active download when it handles this callback.
+    try { suggest(); } catch {}
     if (taken) {
       try { await chrome.downloads.cancel(item.id); } catch {}
       try { await chrome.downloads.erase({ id: item.id }); } catch {}
     }
-    try { suggest(); } catch {}
     showUi();
   })();
   return true;

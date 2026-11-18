@@ -647,6 +647,10 @@ impl WgpuWinitRunning<'_> {
                     if let Some(viewport) = viewports.get(&viewport.ids.parent)
                         && let Some(window) = viewport.window.as_ref()
                     {
+                        log::trace!(target: "gagadown_ui",
+                            "redraw_forward from={window_id:?} to={:?} viewport={viewport_id:?}",
+                            window.id(),
+                        );
                         return Ok(EventResult::RepaintNext(window.id()));
                     }
                     return Ok(EventResult::Wait);
@@ -671,6 +675,7 @@ impl WgpuWinitRunning<'_> {
                 return Ok(EventResult::Wait);
             };
             egui_winit::update_viewport_info(info, &integration.egui_ctx, window, false);
+            let (minimized, occluded) = (info.minimized, info.occluded);
 
             // winit never reports `Occluded` on Windows, so a window hidden with `Visible(false)`
             // looked visible here. Presenting to a hidden window stalls in `get_current_texture`
@@ -693,6 +698,9 @@ impl WgpuWinitRunning<'_> {
                 || is_viewport_or_descendant_visible(viewports, viewport_id)
                 || (viewport_id == ViewportId::ROOT
                     && crate::KEEP_ROOT_UI.load(std::sync::atomic::Ordering::Relaxed));
+            log::trace!(target: "gagadown_ui",
+                "frame_policy window={window_id:?} viewport={viewport_id:?} paint={is_visible} ui={show_ui} minimized={minimized:?} occluded={occluded:?}",
+            );
 
             integration.pre_update();
 
@@ -769,7 +777,10 @@ impl WgpuWinitRunning<'_> {
         // so make sure we hold no locks here!
         let full_output = {
             let _stage = crate::stall::Stage::enter(crate::stall::UPDATE);
-            integration.update(app.as_mut(), viewport_ui_cb.as_deref(), raw_input)
+            log::trace!(target: "gagadown_ui", "ui_begin window={window_id:?} viewport={viewport_id:?}");
+            let output = integration.update(app.as_mut(), viewport_ui_cb.as_deref(), raw_input);
+            log::trace!(target: "gagadown_ui", "ui_end window={window_id:?} viewport={viewport_id:?}");
+            output
         };
 
         // ------------------------------------------------------------
@@ -1208,6 +1219,7 @@ fn render_immediate_viewport(
         let (Some(window), Some(egui_winit)) = (&viewport.window, &mut viewport.egui_winit) else {
             break 'input None;
         };
+        log::trace!(target: "gagadown_ui", "popup_begin window={:?} viewport={:?} reveal={reveal}", window.id(), ids.this);
         egui_winit::update_viewport_info(&mut viewport.info, egui_ctx, window, false);
 
         let mut input = egui_winit.take_egui_input(window);
@@ -1245,6 +1257,7 @@ fn render_immediate_viewport(
     } = egui_ctx.run_ui(input, |ui| {
         viewport_ui_cb(ui);
     });
+    log::trace!(target: "gagadown_ui", "popup_ui_end viewport={:?}", ids.this);
 
     // ------------------------------------------
 
@@ -1296,6 +1309,7 @@ fn render_immediate_viewport(
     if reveal {
         window.set_visible(true);
     }
+    log::trace!(target: "gagadown_ui", "popup_end window={:?} viewport={:?}", window.id(), ids.this);
 
     egui_winit.handle_platform_output(window, platform_output);
 

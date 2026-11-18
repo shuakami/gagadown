@@ -245,6 +245,7 @@ impl Painter {
             let render_state =
                 RenderState::create(&self.config, &self.instance, Some(&surface), self.options)
                     .await?;
+            log::debug!(target: "gagadown_ui", "gpu_backend backend={:?}", render_state.adapter.get_info().backend);
             self.render_state = Some(render_state);
         }
         self.install_surface(surface, viewport_id, size.width, size.height, false);
@@ -601,19 +602,24 @@ impl Painter {
         let output_frame = {
             profiling::scope!("get_current_texture");
             // This is what vsync-waiting happens on my Mac.
+            log::trace!(target: "gagadown_ui", "gpu_acquire_begin window={:?} viewport={viewport_id:?}", window.id());
             let start = web_time::Instant::now();
             let output_frame = surface_state.surface.get_current_texture();
-            vsync_sec += start.elapsed().as_secs_f32();
+            let elapsed = start.elapsed();
+            vsync_sec += elapsed.as_secs_f32();
+            log::trace!(target: "gagadown_ui", "gpu_acquire_end viewport={viewport_id:?} elapsed_ms={}", elapsed.as_millis());
             output_frame
         };
 
         let output_frame = match output_frame {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                log::debug!(target: "gagadown_ui", "gpu_frame_suboptimal viewport={viewport_id:?}");
                 surface_state.needs_reconfigure = true;
                 frame
             }
             other => {
+                log::debug!(target: "gagadown_ui", "gpu_frame_dropped viewport={viewport_id:?} status={other:?}");
                 match (*self.config.on_surface_status)(&other) {
                     SurfaceErrorAction::Reconfigure => {
                         Self::configure_surface(surface_state, render_state, &self.config.surface);
@@ -732,11 +738,14 @@ impl Painter {
         {
             profiling::scope!("Queue::submit");
             // wgpu doesn't document where vsync can happen. Maybe here?
+            log::trace!(target: "gagadown_ui", "gpu_submit_begin viewport={viewport_id:?}");
             let start = web_time::Instant::now();
             render_state
                 .queue
                 .submit(core::iter::chain(user_cmd_bufs, [encoded]));
-            vsync_sec += start.elapsed().as_secs_f32();
+            let elapsed = start.elapsed();
+            vsync_sec += elapsed.as_secs_f32();
+            log::trace!(target: "gagadown_ui", "gpu_submit_end viewport={viewport_id:?} elapsed_ms={}", elapsed.as_millis());
         };
 
         // Ensure that the queue guard does not do unnecessary work when dropped
@@ -770,9 +779,12 @@ impl Painter {
         {
             profiling::scope!("present");
             // wgpu doesn't document where vsync can happen. Maybe here?
+            log::trace!(target: "gagadown_ui", "gpu_present_begin viewport={viewport_id:?}");
             let start = web_time::Instant::now();
             render_state.queue.present(output_frame);
-            vsync_sec += start.elapsed().as_secs_f32();
+            let elapsed = start.elapsed();
+            vsync_sec += elapsed.as_secs_f32();
+            log::trace!(target: "gagadown_ui", "gpu_present_end viewport={viewport_id:?} elapsed_ms={}", elapsed.as_millis());
         }
 
         vsync_sec

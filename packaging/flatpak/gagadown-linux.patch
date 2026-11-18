@@ -1,0 +1,1097 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 991335a..620a4d8 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -166,6 +166,15 @@ dependencies = [
+  "x11rb",
+ ]
+ 
++[[package]]
++name = "arc-swap"
++version = "1.9.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "84a22b5d51209f6de83d37a0b33d320acb8da88823e42a94c075140708f032a5"
++dependencies = [
++ "rustversion",
++]
++
+ [[package]]
+ name = "arrayvec"
+ version = "0.7.8"
+@@ -211,6 +220,20 @@ dependencies = [
+  "pin-project-lite",
+ ]
+ 
++[[package]]
++name = "async-executor"
++version = "1.14.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
++dependencies = [
++ "async-task",
++ "concurrent-queue",
++ "fastrand",
++ "futures-lite",
++ "pin-project-lite",
++ "slab",
++]
++
+ [[package]]
+ name = "async-io"
+ version = "2.6.0"
+@@ -903,6 +926,15 @@ dependencies = [
+  "crossbeam-utils",
+ ]
+ 
++[[package]]
++name = "crossbeam-queue"
++version = "0.3.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "03e8bd762f7479489c70ed6c768ddca99d7296857de437a68dcb2a94365b3fae"
++dependencies = [
++ "crossbeam-utils",
++]
++
+ [[package]]
+ name = "crossbeam-utils"
+ version = "0.8.23"
+@@ -1568,6 +1600,7 @@ dependencies = [
+  "egui-phosphor",
+  "embed-resource",
+  "gagadown-core",
++ "ksni",
+  "parking_lot",
+  "png",
+  "raw-window-handle",
+@@ -1580,6 +1613,7 @@ dependencies = [
+  "tray-icon",
+  "uuid",
+  "windows-sys 0.61.2",
++ "winit",
+  "winreg 0.56.0",
+ ]
+ 
+@@ -2549,6 +2583,26 @@ version = "3.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
+ 
++[[package]]
++name = "ksni"
++version = "0.3.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1bcc1cb43797140f74b711f1c4a49f48a7a7429f211c5fb78264e7bcd1e99caf"
++dependencies = [
++ "arc-swap",
++ "async-executor",
++ "async-io",
++ "async-lock",
++ "crossbeam-queue",
++ "futures-channel",
++ "futures-lite",
++ "futures-util",
++ "pastey",
++ "serde",
++ "task-local",
++ "zbus 5.19.0",
++]
++
+ [[package]]
+ name = "kurbo"
+ version = "0.13.1"
+@@ -3411,6 +3465,12 @@ dependencies = [
+  "windows-link",
+ ]
+ 
++[[package]]
++name = "pastey"
++version = "0.2.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
++
+ [[package]]
+ name = "peniko"
+ version = "0.6.1"
+@@ -4147,7 +4207,7 @@ dependencies = [
+  "rand 0.8.8",
+  "serde",
+  "sha2 0.10.9",
+- "zbus",
++ "zbus 4.4.0",
+ ]
+ 
+ [[package]]
+@@ -4611,6 +4671,15 @@ version = "0.12.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
+ 
++[[package]]
++name = "task-local"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2972044a9e5e448a506a7ff6f0d03b566d8ef4cd6918a58fc59835a0f8666626"
++dependencies = [
++ "pin-project-lite",
++]
++
+ [[package]]
+ name = "tempfile"
+ version = "3.27.0"
+@@ -6188,9 +6257,44 @@ dependencies = [
+  "uds_windows",
+  "windows-sys 0.52.0",
+  "xdg-home",
+- "zbus_macros",
+- "zbus_names",
+- "zvariant",
++ "zbus_macros 4.4.0",
++ "zbus_names 3.0.0",
++ "zvariant 4.2.0",
++]
++
++[[package]]
++name = "zbus"
++version = "5.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5db4be7c075cb421e4b7ee645541604239bd243ba7c357511f4ff3a74b555907"
++dependencies = [
++ "async-broadcast",
++ "async-executor",
++ "async-io",
++ "async-lock",
++ "async-process",
++ "async-recursion",
++ "async-task",
++ "async-trait",
++ "blocking",
++ "enumflags2",
++ "event-listener",
++ "futures-core",
++ "futures-lite",
++ "hex",
++ "libc",
++ "ordered-stream",
++ "rustix 1.1.5",
++ "serde",
++ "serde_repr",
++ "tracing",
++ "uds_windows",
++ "uuid",
++ "windows-sys 0.61.2",
++ "winnow 1.0.4",
++ "zbus_macros 5.19.0",
++ "zbus_names 4.3.5",
++ "zvariant 5.15.1",
+ ]
+ 
+ [[package]]
+@@ -6203,7 +6307,22 @@ dependencies = [
+  "proc-macro2",
+  "quote",
+  "syn 2.0.119",
+- "zvariant_utils",
++ "zvariant_utils 2.1.0",
++]
++
++[[package]]
++name = "zbus_macros"
++version = "5.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2990635d09ade6df1868f72f8cac69a876a90981e8bd3c40b1be413f8dc88f40"
++dependencies = [
++ "proc-macro-crate 3.5.0",
++ "proc-macro2",
++ "quote",
++ "syn 3.0.6",
++ "zbus_names 4.3.5",
++ "zvariant 5.15.1",
++ "zvariant_utils 4.2.0",
+ ]
+ 
+ [[package]]
+@@ -6214,7 +6333,27 @@ checksum = "4b9b1fef7d021261cc16cba64c351d291b715febe0fa10dc3a443ac5a5022e6c"
+ dependencies = [
+  "serde",
+  "static_assertions",
+- "zvariant",
++ "zvariant 4.2.0",
++]
++
++[[package]]
++name = "zbus_names"
++version = "4.3.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "812a12be4ead7a59e18ea8f047d08add0066b73bc62fc1467066a2472ae088dd"
++dependencies = [
++ "serde",
++ "winnow 1.0.4",
++ "zvariant 5.15.1",
++]
++
++[[package]]
++name = "zcheapstr"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d1afec51604565183aeb5c54c20aeab286120d4e4460f7f76e3e8bb8c0d99473"
++dependencies = [
++ "serde",
+ ]
+ 
+ [[package]]
+@@ -6348,7 +6487,22 @@ dependencies = [
+  "enumflags2",
+  "serde",
+  "static_assertions",
+- "zvariant_derive",
++ "zvariant_derive 4.2.0",
++]
++
++[[package]]
++name = "zvariant"
++version = "5.15.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "80bf6d6cd6a4b601acb64cfb8284cdc643fcfa75ef26ae3c46ec8aa4e8a1fbb7"
++dependencies = [
++ "endi",
++ "enumflags2",
++ "serde",
++ "winnow 1.0.4",
++ "zcheapstr",
++ "zvariant_derive 5.15.1",
++ "zvariant_utils 4.2.0",
+ ]
+ 
+ [[package]]
+@@ -6361,7 +6515,20 @@ dependencies = [
+  "proc-macro2",
+  "quote",
+  "syn 2.0.119",
+- "zvariant_utils",
++ "zvariant_utils 2.1.0",
++]
++
++[[package]]
++name = "zvariant_derive"
++version = "5.15.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ef2672456ba1cb54b5eaec136e63135b3c7495fb938e53b28a62e633496d486d"
++dependencies = [
++ "proc-macro-crate 3.5.0",
++ "proc-macro2",
++ "quote",
++ "syn 3.0.6",
++ "zvariant_utils 4.2.0",
+ ]
+ 
+ [[package]]
+@@ -6374,3 +6541,16 @@ dependencies = [
+  "quote",
+  "syn 2.0.119",
+ ]
++
++[[package]]
++name = "zvariant_utils"
++version = "4.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bad0294361a320b694a328460dc73add56c306150f5cb6bfafc44446120008a3"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "serde",
++ "syn 3.0.6",
++ "winnow 1.0.4",
++]
+diff --git a/crates/gagadown-app/Cargo.toml b/crates/gagadown-app/Cargo.toml
+index a4a4364..a792b30 100644
+--- a/crates/gagadown-app/Cargo.toml
++++ b/crates/gagadown-app/Cargo.toml
+@@ -32,3 +32,7 @@ tray-icon = "0.26"
+ raw-window-handle = "0.6"
+ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Environment"] }
+ winreg = "0.56.0"
++
++[target."cfg(target_os = \"linux\")".dependencies]
++ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
++winit = { version = "0.30.13", default-features = false, features = ["x11"] }
+diff --git a/crates/gagadown-app/src/main.rs b/crates/gagadown-app/src/main.rs
+index cbfba48..7372f9e 100644
+--- a/crates/gagadown-app/src/main.rs
++++ b/crates/gagadown-app/src/main.rs
+@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
+ use uuid::Uuid;
+ 
+ static ICON: &[u8] = include_bytes!("../../../assets/icon_256.rgba");
++static CJK_FONT: &[u8] = include_bytes!("../../../packaging/flatpak/NotoSansCJKsc-Regular.ttf");
+ const DEFAULT_ACCENT: Color32 = Color32::from_rgb(0, 120, 212);
+ const PAGE_TRANSITION_SECS: f32 = 0.42;
+ const PAGE_TRANSITION_OFFSET: f32 = 18.0;
+@@ -640,10 +641,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
+     ("icons/128.png", include_bytes!("../../../extension/icons/128.png")),
+ ];
+ 
+-/// Store listing IDs. Once set, installing goes through the browser's own
+-/// external-extension prompt instead of loading the unpacked folder.
+-const CHROME_STORE_ID: Option<&str> = None;
+-const EDGE_STORE_ID: Option<&str> = None;
++/// Browsers with a published listing install through their store page.
++const CHROME_STORE_URL: &str = "https://chromewebstore.google.com/detail/dchaceihdgmmblaalchfafmnalhjpiip";
+ 
+ struct ExtGuide {
+     browser: usize,
+@@ -654,22 +653,35 @@ struct ExtGuide {
+ struct Browser {
+     key: &'static str,
+     name: &'static str,
+-    exe: std::path::PathBuf,
++    exe: Option<std::path::PathBuf>,
+     page: &'static str,
+-    reg: &'static str,
+-    store_id: Option<&'static str>,
+-    update_url: &'static str,
+-    store_page: &'static str,
++    store_url: Option<&'static str>,
+ }
+ 
+ fn browsers() -> Vec<Browser> {
+-    [
+-        ("chrome", "Google Chrome", "chrome.exe", "chrome://extensions", r"Software\Google\Chrome\Extensions", CHROME_STORE_ID, "https://clients2.google.com/service/update2/crx", "https://chromewebstore.google.com/detail/"),
+-        ("edge", "Microsoft Edge", "msedge.exe", "edge://extensions", r"Software\Microsoft\Edge\Extensions", EDGE_STORE_ID, "https://edge.microsoft.com/extensionwebstorebase/v1/crx", "https://microsoftedge.microsoft.com/addons/detail/"),
+-    ]
+-    .into_iter()
+-    .filter_map(|(key, name, exe, page, reg, store_id, update_url, store_page)| Some(Browser { key, name, exe: win::app_path(exe)?, page, reg, store_id, update_url, store_page }))
+-    .collect()
++    let choices = [
++        ("chrome", "Google Chrome", "chrome.exe", "chrome://extensions", Some(CHROME_STORE_URL)),
++        ("edge", "Microsoft Edge", "msedge.exe", "edge://extensions", None),
++    ];
++    let flatpak = std::env::var_os("FLATPAK_ID").is_some();
++    choices.into_iter().filter_map(|(key, name, exe, page, store_url)| {
++        let path = win::app_path(exe);
++        (flatpak || path.is_some()).then_some(Browser {
++            key, name, exe: path, page, store_url,
++        })
++    }).collect()
++}
++
++fn launch_browser(browser: &Browser, uri: &str) -> std::io::Result<()> {
++    if std::env::var_os("FLATPAK_ID").is_some() {
++        // xdg-open delegates to the host desktop portal, which opens the URI in
++        // the user's chosen browser without exposing host executables to the sandbox.
++        std::process::Command::new("xdg-open").arg(uri).spawn().map(|_| ())
++    } else if let Some(exe) = &browser.exe {
++        std::process::Command::new(exe).arg(uri).spawn().map(|_| ())
++    } else {
++        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "browser executable not found"))
++    }
+ }
+ 
+ /// Writes the bundled extension into `<data>/extension`, touching only files that changed.
+@@ -1074,6 +1086,23 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
+ 
+ /// Writes `crash.log` on panic and `freeze.log` when the UI thread is stuck in one stage.
+ fn install_diagnostics(dir: std::path::PathBuf) {
++    if std::env::var_os("GAGADOWN_UI_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")) {
++        use tracing_subscriber::{filter::Targets, prelude::*};
++
++        let trace = tracing_subscriber::fmt::layer()
++            .with_timer(tracing_subscriber::fmt::time::uptime())
++            .with_ansi(false)
++            .with_writer(std::io::stderr);
++        let result = tracing_subscriber::registry()
++            .with(trace)
++            .with(Targets::new().with_target("gagadown_ui", tracing::Level::TRACE))
++            .try_init();
++        match result {
++            Ok(()) => tracing::info!(target: "gagadown_ui", "UI trace enabled"),
++            Err(err) => eprintln!("GaGaDown: failed to initialize UI trace: {err}"),
++        }
++    }
++
+     fn append(path: &Path, line: &str) {
+         use std::io::Write;
+         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+@@ -1107,6 +1136,7 @@ fn install_diagnostics(dir: std::path::PathBuf) {
+             if t > tier {
+                 tier = t;
+                 append(&freeze, &format!("[{}] 界面线程卡在「{}」已 {secs} 秒\n", now_secs(), eframe::stall::name(stage)));
++                tracing::warn!(target: "gagadown_ui", stage = eframe::stall::name(stage), secs, "UI watchdog");
+             }
+         }
+     });
+@@ -1604,14 +1634,6 @@ mod win {
+             .filter(|p| p.exists())
+     }
+ 
+-    /// Per-user external-extension entry; the browser asks the user to enable it on next start.
+-    pub fn register_extension(reg: &str, id: &str, update_url: &str) -> bool {
+-        winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+-            .create_subkey(format!(r"{reg}\{id}"))
+-            .and_then(|(k, _)| k.set_value("update_url", &update_url))
+-            .is_ok()
+-    }
+-
+     pub fn set_autostart(on: bool) {
+         let Ok((k, _)) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run") else {
+             return;
+@@ -1701,14 +1723,31 @@ mod win {
+         }
+     }
+ 
+-    pub fn register_extension(_reg: &str, _id: &str, _update_url: &str) -> bool {
+-        false
+-    }
+-
+     pub fn accent() -> Option<eframe::egui::Color32> {
+         None
+     }
+     pub fn decorate(_frame: &eframe::Frame) {}
++    #[cfg(target_os = "linux")]
++    pub fn tray(
++        ctx: eframe::egui::Context,
++        rgba: Vec<u8>,
++        quit: std::sync::Arc<std::sync::atomic::AtomicBool>,
++        hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
++    ) -> Option<Box<dyn std::any::Any>> {
++        use super::GaGaTray;
++        use ksni::blocking::TrayMethods;
++        let mut pixels = Vec::with_capacity(rgba.len());
++        for px in rgba.chunks_exact(4) {
++            pixels.extend_from_slice(&[px[3], px[0], px[1], px[2]]);
++        }
++        let tray = GaGaTray { ctx, quit, hidden, icon: ksni::Icon { width: 32, height: 32, data: pixels } }
++            .disable_dbus_name(true)
++            .assume_sni_available(true)
++            .spawn()
++            .ok()?;
++        Some(Box::new(tray))
++    }
++    #[cfg(not(target_os = "linux"))]
+     pub fn tray(
+         _ctx: eframe::egui::Context,
+         _rgba: Vec<u8>,
+@@ -1722,6 +1761,46 @@ mod win {
+     }
+ }
+ 
++#[cfg(target_os = "linux")]
++struct GaGaTray {
++    ctx: eframe::egui::Context,
++    quit: std::sync::Arc<std::sync::atomic::AtomicBool>,
++    hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
++    icon: ksni::Icon,
++}
++
++#[cfg(target_os = "linux")]
++impl GaGaTray {
++    fn show_window(&self) {
++        use eframe::egui::ViewportCommand as V;
++        self.hidden.store(false, std::sync::atomic::Ordering::SeqCst);
++        self.ctx.send_viewport_cmd(V::Visible(true));
++        self.ctx.send_viewport_cmd(V::Minimized(false));
++        self.ctx.send_viewport_cmd(V::Focus);
++        self.ctx.request_repaint();
++    }
++}
++
++#[cfg(target_os = "linux")]
++impl ksni::Tray for GaGaTray {
++    fn id(&self) -> String { "dev.gagadown.GaGaDown".into() }
++    fn title(&self) -> String { "GaGaDown".into() }
++    fn icon_pixmap(&self) -> Vec<ksni::Icon> { vec![self.icon.clone()] }
++    fn activate(&mut self, _x: i32, _y: i32) { self.show_window(); }
++    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
++        use ksni::menu::{MenuItem, StandardItem};
++        let mut show = StandardItem { label: "显示主界面".into(), ..Default::default() };
++        show.activate = Box::new(|tray: &mut GaGaTray| tray.show_window());
++        let mut exit = StandardItem { label: "退出".into(), ..Default::default() };
++        exit.activate = Box::new(|tray: &mut GaGaTray| {
++            tray.quit.store(true, std::sync::atomic::Ordering::SeqCst);
++            tray.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
++            tray.ctx.request_repaint();
++        });
++        vec![show.into(), MenuItem::Separator, exit.into()]
++    }
++}
++
+ fn apply_style(ctx: &egui::Context, accent: Color32) {
+     for (theme, dark) in [(egui::Theme::Light, false), (egui::Theme::Dark, true)] {
+         let p = Pal::new(dark, accent);
+@@ -1778,6 +1857,8 @@ fn setup_fonts(ctx: &egui::Context) {
+     let mut fonts = egui::FontDefinitions::default();
+     let read = |c: &[&str]| c.iter().find_map(|p| std::fs::read(p).ok());
+     let mut base = Vec::new();
++    fonts.font_data.insert("cjk".into(), Arc::new(egui::FontData::from_static(CJK_FONT).tweak(sharp())));
++    base.push("cjk".to_string());
+     if let Some(d) = read(&[
+         "C:\\Windows\\Fonts\\msyh.ttc",
+         "C:\\Windows\\Fonts\\msyh.ttf",
+@@ -1804,7 +1885,7 @@ fn setup_fonts(ctx: &egui::Context) {
+     icons.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
+     fonts.families.insert(FontFamily::Name("icons".into()), icons);
+     if !base.is_empty() {
+-        fonts.families.entry(FontFamily::Monospace).or_default().push("ui".into());
++        fonts.families.entry(FontFamily::Monospace).or_default().push("cjk".into());
+     }
+     let mut bold_fam: Vec<String> = Vec::new();
+     if let Some(d) = read(&["C:\\Windows\\Fonts\\msyhbd.ttc", "C:\\Windows\\Fonts\\msyhbd.ttf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]) {
+@@ -1893,12 +1974,16 @@ impl App {
+ 
+     fn install_extension(&mut self, ctx: &egui::Context, i: usize) {
+         let b = self.browsers.get(i).cloned();
+-        if let Some((b, id)) = b.as_ref().and_then(|b| Some((b, b.store_id?))) {
+-            if win::register_extension(b.reg, id, b.update_url) {
+-                let _ = std::process::Command::new(&b.exe).arg(format!("{}{id}", b.store_page)).spawn();
+-                self.toast(format!("已添加到 {}，重启浏览器后点“启用”", b.name), false);
+-                return;
++        if let Some((b, url)) = b.as_ref().and_then(|b| Some((b, b.store_url?))) {
++            match launch_browser(b, url) {
++                Ok(_) => {
++                    self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
++                    let target = if std::env::var_os("FLATPAK_ID").is_some() { "系统默认浏览器" } else { b.name };
++                    self.toast(format!("已请求 {target} 打开插件商店页面"), false);
++                }
++                Err(e) => self.toast(format!("打开 {} 失败：{e}，请复制下方商店地址手动打开", b.name), true),
+             }
++            return;
+         }
+         let dir = match unpack_extension(self.engine.data_dir()) {
+             Ok(d) => d,
+@@ -1907,8 +1992,10 @@ impl App {
+         match b {
+             Some(b) => {
+                 ctx.copy_text(b.page.to_string());
+-                let _ = std::process::Command::new(&b.exe).spawn();
+-                self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
++                match launch_browser(&b, b.page) {
++                    Ok(_) => self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() }),
++                    Err(e) => self.toast(format!("打开 {} 失败：{e}", b.name), true),
++                }
+             }
+             None => {
+                 ctx.copy_text(dir.display().to_string());
+@@ -2161,7 +2248,12 @@ impl App {
+         let maxr = close.translate(vec2(-bw, 0.0));
+         let minr = maxr.translate(vec2(-bw, 0.0));
+         if chrome_btn(ui, close, Glyph::Close, p) {
+-            ctx.send_viewport_cmd(ViewportCommand::Close);
++            if self.tray.is_some() {
++                self.hidden.store(true, Ordering::SeqCst);
++                ctx.send_viewport_cmd(ViewportCommand::Visible(false));
++            } else {
++                ctx.send_viewport_cmd(ViewportCommand::Close);
++            }
+         }
+         if chrome_btn(ui, maxr, if maximized { Glyph::Restore } else { Glyph::Max }, p) {
+             ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+@@ -2856,7 +2948,7 @@ impl App {
+         let (mut act, mut copy, mut open, mut tab, mut copy_page, mut copy_token) = (None, false, false, None, None, false);
+         let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
+         let browsers = self.browsers.clone();
+-        let icons: Vec<_> = browsers.iter().map(|b| self.file_tex(&ctx, "b.exe", Some(&b.exe))).collect();
++        let icons: Vec<_> = browsers.iter().map(|b| self.file_tex(&ctx, "b.exe", b.exe.as_deref())).collect();
+         let sel = self.ext_tab.min(browsers.len().saturating_sub(1));
+         let on = browsers.get(sel).is_some_and(|b| self.ext_connected(b.key));
+         let since = self.ext_guide.as_ref().filter(|g| g.browser == sel).map(|g| g.since);
+@@ -2927,7 +3019,8 @@ impl App {
+                 let (st, sc) = if on { ("已连接", p.green) } else { ("未连接", p.weak) };
+                 text_line(&pt, pos2(tx, r.center().y + 11.0), Align2::LEFT_CENTER, st, font(12.0), sc, 200.0);
+                 let br = Rect::from_min_size(pos2(r.right() - 112.0, r.center().y - 15.0), vec2(96.0, 30.0));
+-                if btn_at(ui, br, Id::new(("ext-install", sel)), if on { "重新安装" } else { "安装插件" }, !on, p) {
++                let install_label = if b.store_url.is_some() { "打开商店" } else if on { "重新安装" } else { "安装插件" };
++                if btn_at(ui, br, Id::new(("ext-install", sel)), install_label, !on, p) {
+                     act = Some(sel);
+                 }
+ 
+@@ -2940,20 +3033,36 @@ impl App {
+                 ui.painter().rect(token_rect, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
+                 text_line(ui.painter(), pos2(token_rect.left() + 8.0, token_rect.center().y), Align2::LEFT_CENTER, self.engine.extension_api_token(), FontId::monospace(10.0), p.text, token_rect.width() - 16.0);
+ 
+-                let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
+                 ui.add_space(24.0);
+                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
+                 text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装步骤", bold(13.5), p.text, w);
+                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
+-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "点“安装插件”会打开浏览器，并复制好扩展页地址", font(12.0), p.weak, w);
++                let hint = if std::env::var_os("FLATPAK_ID").is_some() {
++                    "Flatpak 会调用系统默认浏览器；请确认打开的是 Chrome 或 Edge"
++                } else if b.store_url.is_some() {
++                    "点“打开商店”前往 Chrome 网上应用店，安装后完成配对并启用"
++                } else {
++                    "点“安装插件”会打开浏览器，并复制好扩展页地址"
++                };
++                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, hint, font(12.0), p.weak, w);
+                 ui.add_space(8.0);
+-                let steps = [
+-                    format!("在浏览器地址栏粘贴 {} 并回车", b.page),
+-                    format!("在扩展页打开“{dev}”开关"),
+-                    format!("点击“{load}”"),
+-                    "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”".to_string(),
+-                    "在扩展弹出窗口粘贴上方配对码，并完成数据处理同意".to_string(),
+-                ];
++                let steps = if b.store_url.is_some() {
++                    vec![
++                        "在商店页面点击“添加至 Chrome”，并确认添加扩展程序".to_string(),
++                        "在浏览器工具栏的扩展菜单中打开 GaGaDown".to_string(),
++                        "将上方配对码粘贴到扩展弹窗，点击“保存配对码”".to_string(),
++                        "阅读数据处理说明，勾选同意并点击“同意并启用”，确认权限".to_string(),
++                    ]
++                } else {
++                    let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
++                    vec![
++                        format!("在浏览器地址栏粘贴 {} 并回车", b.page),
++                        format!("在扩展页打开“{dev}”开关"),
++                        format!("点击“{load}”"),
++                        "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”".to_string(),
++                        "在扩展弹出窗口粘贴上方配对码，并完成数据处理同意".to_string(),
++                    ]
++                };
+                 let ind = 30.0;
+                 for (n, s) in steps.iter().enumerate() {
+                     let (r, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+@@ -2961,36 +3070,46 @@ impl App {
+                     let c = pos2(r.left() + 10.0, r.center().y);
+                     pt.circle_filled(c, 10.0, p.accent.gamma_multiply(0.14));
+                     pt.text(c, Align2::CENTER_CENTER, (n + 1).to_string(), font(11.5), p.accent);
+-                    let tw = if n == 0 { w - ind - 70.0 } else { w - ind };
++                    let tw = if n == 0 { w - ind - 88.0 } else { w - ind };
+                     text_line(pt, pos2(r.left() + ind, r.center().y), Align2::LEFT_CENTER, s, font(13.0), p.text, tw);
+                     if n == 0 {
+-                        let cb = Rect::from_min_size(pos2(r.right() - 58.0, r.center().y - 14.0), vec2(58.0, 28.0));
+-                        if btn_at(ui, cb, Id::new("ext-copy-page"), "复制", false, p) {
+-                            copy_page = Some(b.page);
++                        let cb = Rect::from_min_size(pos2(r.right() - 76.0, r.center().y - 14.0), vec2(76.0, 28.0));
++                        if btn_at(ui, cb, Id::new("ext-copy-page"), "复制地址", false, p) {
++                            copy_page = Some(b.store_url.unwrap_or(b.page));
+                         }
+                     }
+                 }
+-                ui.add_space(4.0);
+-                let (row, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
+-                let r = Rect::from_min_max(pos2(row.left() + ind, row.top()), row.max);
+-                ui.painter().rect(r, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
+-                let ob = Rect::from_min_size(pos2(r.right() - 98.0, r.top() + 4.0), vec2(94.0, 28.0));
+-                let cb = Rect::from_min_size(pos2(ob.left() - 62.0, r.top() + 4.0), vec2(58.0, 28.0));
+-                text_line(ui.painter(), pos2(r.left() + 12.0, r.center().y), Align2::LEFT_CENTER, &path_s, FontId::monospace(11.5), p.text, cb.left() - r.left() - 24.0);
+-                copy = btn_at(ui, cb, Id::new("ext-copy"), "复制", false, p);
+-                open = btn_at(ui, ob, Id::new("ext-open"), "打开文件夹", false, p);
++                if b.store_url.is_some() {
++                    ui.add_space(8.0);
++                    let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
++                    text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "已安装开发者版本？请先停用或移除旧插件，再安装商店版本并重新配对。", font(12.0), p.weak, w);
++                } else {
++                    ui.add_space(4.0);
++                    let (row, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
++                    let r = Rect::from_min_max(pos2(row.left() + ind, row.top()), row.max);
++                    ui.painter().rect(r, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
++                    let ob = Rect::from_min_size(pos2(r.right() - 98.0, r.top() + 4.0), vec2(94.0, 28.0));
++                    let cb = Rect::from_min_size(pos2(ob.left() - 62.0, r.top() + 4.0), vec2(58.0, 28.0));
++                    text_line(ui.painter(), pos2(r.left() + 12.0, r.center().y), Align2::LEFT_CENTER, &path_s, FontId::monospace(11.5), p.text, cb.left() - r.left() - 24.0);
++                    copy = btn_at(ui, cb, Id::new("ext-copy"), "复制", false, p);
++                    open = btn_at(ui, ob, Id::new("ext-open"), "打开文件夹", false, p);
++                }
+                 if since.is_none() {
+                     return;
+                 }
+                 ui.add_space(16.0);
+                 let (row, _) = ui.allocate_exact_size(vec2(w, 22.0), Sense::hover());
+-                let x0 = row.left() + ind;
++                let (label, size, color) = if linked {
++                    ("安装成功，插件已连接", 13.0, p.green)
++                } else {
++                    ("等待插件连接…", 12.5, p.weak)
++                };
++                let icon = row.left_center() + vec2(7.0, 0.0);
++                text_line(ui.painter(), row.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, label, font(size), color, w - 22.0);
+                 if linked {
+-                    ui.painter().text(pos2(x0, row.center().y), Align2::LEFT_CENTER, ic::CHECK_CIRCLE, ifont(15.0), p.green);
+-                    text_line(ui.painter(), pos2(x0 + 22.0, row.center().y), Align2::LEFT_CENTER, "安装成功，插件已连接", font(13.0), p.green, w - ind - 30.0);
++                    ui.painter().text(icon, Align2::CENTER_CENTER, ic::CHECK_CIRCLE, ifont(15.0), color);
+                 } else {
+-                    ui.put(Rect::from_center_size(pos2(x0 + 7.0, row.center().y), vec2(14.0, 14.0)), egui::Spinner::new().size(14.0).color(p.weak));
+-                    text_line(ui.painter(), pos2(x0 + 22.0, row.center().y), Align2::LEFT_CENTER, "等待插件连接…", font(12.5), p.weak, w - ind - 30.0);
++                    egui::Spinner::new().color(color).paint_at(ui, Rect::from_center_size(icon, vec2(14.0, 14.0)));
+                 }
+             });
+         });
+@@ -3101,18 +3220,23 @@ impl App {
+         let y = r.top() + 126.0;
+         let mut lx = x;
+         let repo = "https://github.com/shuakami/gagadown";
++        let privacy = "https://github.com/shuakami/gagadown/blob/main/docs/privacy-policy.md";
+         let dir = self.engine.data_dir().to_path_buf();
+-        for (key, label, tip) in [("about_dir", "打开数据目录", "设置、任务记录和日志都在这里"), ("about_repo", "GitHub", repo)] {
++        for (key, label, tip) in [
++            ("about_dir", "打开数据目录", "设置、任务记录和日志都在这里"),
++            ("about_repo", "GitHub", repo),
++            ("about_privacy", "隐私政策", privacy),
++        ] {
+             let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, label, font(12.5), p.accent, w);
+             let resp = ui.interact(lr.expand(3.0), Id::new(key), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).tip(tip);
+             if resp.hovered() {
+                 pt.hline(lr.x_range(), lr.bottom() + 1.0, Stroke::new(1.0, p.accent.gamma_multiply(0.6)));
+             }
+             if resp.clicked() {
+-                if key == "about_repo" {
+-                    open_path(Path::new(repo));
+-                } else {
++                if key == "about_dir" {
+                     open_path(&dir);
++                } else {
++                    open_path(Path::new(tip));
+                 }
+             }
+             lx = lr.right() + 18.0;
+@@ -3948,10 +4072,10 @@ fn main() -> eframe::Result {
+     }
+     let icon = Arc::new(egui::IconData { rgba: ICON.to_vec(), width: 256, height: 256 });
+     let accent = win::accent().unwrap_or(DEFAULT_ACCENT);
+-    let opts = eframe::NativeOptions {
++    let mut opts = eframe::NativeOptions {
+         viewport: egui::ViewportBuilder::default()
+             .with_title("GaGaDown")
+-            .with_app_id("gagadown")
++            .with_app_id("dev.gagadown.GaGaDown")
+             .with_inner_size([1120.0, 720.0])
+             .with_min_inner_size([760.0, 480.0])
+             .with_decorations(false)
+@@ -3959,6 +4083,13 @@ fn main() -> eframe::Result {
+         centered: true,
+         ..Default::default()
+     };
++    #[cfg(target_os = "linux")]
++    if std::env::var_os("GAGADOWN_FORCE_X11").is_some() {
++        use winit::platform::x11::EventLoopBuilderExtX11;
++        opts.event_loop_builder = Some(Box::new(|builder| {
++            builder.with_x11();
++        }));
++    }
+     #[cfg(windows)]
+     eframe::epaint::text::set_glyph_rasterizer(win::gdi_glyph);
+     eframe::run_native(
+diff --git a/crates/gagadown-core/src/api.rs b/crates/gagadown-core/src/api.rs
+index 8b287de..2ec7b4f 100644
+--- a/crates/gagadown-core/src/api.rs
++++ b/crates/gagadown-core/src/api.rs
+@@ -26,22 +26,54 @@ fn origin_ok(o: &str) -> bool {
+     })
+ }
+ 
++fn validate_request(
++    origin: Option<&str>,
++    token: Option<&str>,
++    preflight: bool,
++    expected_token: &str,
++) -> Result<(), (StatusCode, &'static str)> {
++    match origin {
++        Some(o) if !origin_ok(o) => return Err((StatusCode::FORBIDDEN, "origin not allowed")),
++        None if preflight => return Err((StatusCode::FORBIDDEN, "origin required")),
++        _ => {}
++    }
++
++    if preflight {
++        return Ok(());
++    }
++
++    let Some(token) = token else {
++        return Err((StatusCode::UNAUTHORIZED, "pairing required"));
++    };
++    if !bool::from(token.as_bytes().ct_eq(expected_token.as_bytes())) {
++        return Err((StatusCode::UNAUTHORIZED, "invalid pairing token"));
++    }
++    Ok(())
++}
++
+ async fn guard(State(engine): State<Engine>, req: Request, next: Next) -> Response {
+-    let Some(o) = req.headers().get("origin").and_then(|v| v.to_str().ok()) else {
+-        return (StatusCode::FORBIDDEN, "origin required").into_response();
++    let origin = match req.headers().get("origin") {
++        Some(value) => match value.to_str() {
++            Ok(origin) => Some(origin),
++            Err(_) => return (StatusCode::FORBIDDEN, "origin not allowed").into_response(),
++        },
++        None => None,
+     };
+-    if !origin_ok(o) {
+-        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
++    let token = req
++        .headers()
++        .get("x-gagadown-token")
++        .and_then(|v| v.to_str().ok());
++    if let Err((status, message)) = validate_request(
++        origin,
++        token,
++        req.method() == Method::OPTIONS,
++        engine.extension_api_token(),
++    ) {
++        return (status, message).into_response();
+     }
+     if req.method() == Method::OPTIONS {
+         return next.run(req).await;
+     }
+-    let Some(token) = req.headers().get("x-gagadown-token").and_then(|v| v.to_str().ok()) else {
+-        return (StatusCode::UNAUTHORIZED, "pairing required").into_response();
+-    };
+-    if !bool::from(token.as_bytes().ct_eq(engine.extension_api_token().as_bytes())) {
+-        return (StatusCode::UNAUTHORIZED, "invalid pairing token").into_response();
+-    }
+     next.run(req).await
+ }
+ 
+@@ -252,7 +284,7 @@ pub async fn serve(engine: Engine, port: u16) -> std::io::Result<()> {
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::origin_ok;
++    use super::{StatusCode, origin_ok, validate_request};
+ 
+     #[test]
+     fn accepts_only_extension_origins() {
+@@ -263,4 +295,41 @@ mod tests {
+         assert!(!origin_ok("chrome-extension://id/path"));
+         assert!(!origin_ok("chrome-extension://"));
+     }
++
++    #[test]
++    fn missing_origin_still_requires_pairing_token() {
++        assert_eq!(
++            validate_request(None, Some("secret"), false, "secret"),
++            Ok(())
++        );
++        assert_eq!(
++            validate_request(None, None, false, "secret"),
++            Err((StatusCode::UNAUTHORIZED, "pairing required"))
++        );
++        assert_eq!(
++            validate_request(None, Some("wrong"), false, "secret"),
++            Err((StatusCode::UNAUTHORIZED, "invalid pairing token"))
++        );
++    }
++
++    #[test]
++    fn preflight_and_present_origins_remain_restricted() {
++        assert_eq!(
++            validate_request(None, None, true, "secret"),
++            Err((StatusCode::FORBIDDEN, "origin required"))
++        );
++        assert_eq!(
++            validate_request(Some("https://example.com"), Some("secret"), false, "secret"),
++            Err((StatusCode::FORBIDDEN, "origin not allowed"))
++        );
++        assert_eq!(
++            validate_request(
++                Some("chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"),
++                None,
++                true,
++                "secret",
++            ),
++            Ok(())
++        );
++    }
+ }
+diff --git a/extension/background.js b/extension/background.js
+index 8e98bf5..0883966 100644
+--- a/extension/background.js
++++ b/extension/background.js
+@@ -168,11 +168,12 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+         taken = (await handoff({ url, originalUrl: item.url, referrer: item.referrer, filename: item.filename, size, mime: item.mime })) === "ok";
+       }
+     } catch {}
++    // Chromium looks up the active download when it handles this callback.
++    try { suggest(); } catch {}
+     if (taken) {
+       try { await chrome.downloads.cancel(item.id); } catch {}
+       try { await chrome.downloads.erase({ id: item.id }); } catch {}
+     }
+-    try { suggest(); } catch {}
+     showUi();
+   })();
+   return true;
+diff --git a/patches/eframe/src/native/run.rs b/patches/eframe/src/native/run.rs
+index 0759bf3..ff6ae31 100644
+--- a/patches/eframe/src/native/run.rs
++++ b/patches/eframe/src/native/run.rs
+@@ -199,12 +199,18 @@ impl<T: WinitApp> WinitAppWrapper<T> {
+                 }
+ 
+                 if let Some(window) = self.winit_app.window(*window_id) {
++                    let hidden = is_invisible_or_minimized(&window);
++                    log::trace!(target: "gagadown_ui",
++                        "redraw_due window={window_id:?} dispatch={} late_ms={}",
++                        if hidden { "direct" } else { "winit" },
++                        now.saturating_duration_since(*repaint_time).as_millis(),
++                    );
+                     // On Windows, invisible windows don't receive RedrawRequested
+                     // events, so pending viewport commands (e.g. Visible(true)) would
+                     // never be processed. We collect these windows to paint them
+                     // directly below.
+                     // See: https://github.com/emilk/egui/issues/5229
+-                    if is_invisible_or_minimized(&window) {
++                    if hidden {
+                         invisible_window_ids.push(*window_id);
+                     } else {
+                         log::trace!("request_redraw for {window_id:?}");
+@@ -320,6 +326,10 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
+                         .winit_app
+                         .egui_ctx()
+                         .map_or(0, |ctx| ctx.cumulative_pass_nr_for(viewport_id));
++                    log::trace!(target: "gagadown_ui",
++                        "repaint_request viewport={viewport_id:?} pass={cumulative_pass_nr} current_pass={current_pass_nr} overdue_ms={}",
++                        Instant::now().saturating_duration_since(when).as_millis(),
++                    );
+                     if current_pass_nr == cumulative_pass_nr
+                         || current_pass_nr == cumulative_pass_nr + 1
+                     {
+@@ -372,6 +382,17 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
+     ) {
+         profiling::function_scope!(egui_winit::short_window_event_description(&event));
+         let _stage = crate::stall::Stage::enter(crate::stall::EVENT);
++        if matches!(
++            event,
++            winit::event::WindowEvent::RedrawRequested
++                | winit::event::WindowEvent::MouseInput { .. }
++                | winit::event::WindowEvent::CloseRequested
++                | winit::event::WindowEvent::Occluded(_)
++        ) {
++            log::trace!(target: "gagadown_ui", "window_event window={window_id:?} event={}",
++                egui_winit::short_window_event_description(&event),
++            );
++        }
+ 
+         // Nb: Make sure this guard is dropped after this function returns.
+         event_loop_context::with_event_loop_context(event_loop, move || {
+diff --git a/patches/eframe/src/native/wgpu_integration.rs b/patches/eframe/src/native/wgpu_integration.rs
+index 61629a3..8f756af 100644
+--- a/patches/eframe/src/native/wgpu_integration.rs
++++ b/patches/eframe/src/native/wgpu_integration.rs
+@@ -647,6 +647,10 @@ impl WgpuWinitRunning<'_> {
+                     if let Some(viewport) = viewports.get(&viewport.ids.parent)
+                         && let Some(window) = viewport.window.as_ref()
+                     {
++                        log::trace!(target: "gagadown_ui",
++                            "redraw_forward from={window_id:?} to={:?} viewport={viewport_id:?}",
++                            window.id(),
++                        );
+                         return Ok(EventResult::RepaintNext(window.id()));
+                     }
+                     return Ok(EventResult::Wait);
+@@ -671,6 +675,7 @@ impl WgpuWinitRunning<'_> {
+                 return Ok(EventResult::Wait);
+             };
+             egui_winit::update_viewport_info(info, &integration.egui_ctx, window, false);
++            let (minimized, occluded) = (info.minimized, info.occluded);
+ 
+             // winit never reports `Occluded` on Windows, so a window hidden with `Visible(false)`
+             // looked visible here. Presenting to a hidden window stalls in `get_current_texture`
+@@ -693,6 +698,9 @@ impl WgpuWinitRunning<'_> {
+                 || is_viewport_or_descendant_visible(viewports, viewport_id)
+                 || (viewport_id == ViewportId::ROOT
+                     && crate::KEEP_ROOT_UI.load(std::sync::atomic::Ordering::Relaxed));
++            log::trace!(target: "gagadown_ui",
++                "frame_policy window={window_id:?} viewport={viewport_id:?} paint={is_visible} ui={show_ui} minimized={minimized:?} occluded={occluded:?}",
++            );
+ 
+             integration.pre_update();
+ 
+@@ -769,7 +777,10 @@ impl WgpuWinitRunning<'_> {
+         // so make sure we hold no locks here!
+         let full_output = {
+             let _stage = crate::stall::Stage::enter(crate::stall::UPDATE);
+-            integration.update(app.as_mut(), viewport_ui_cb.as_deref(), raw_input)
++            log::trace!(target: "gagadown_ui", "ui_begin window={window_id:?} viewport={viewport_id:?}");
++            let output = integration.update(app.as_mut(), viewport_ui_cb.as_deref(), raw_input);
++            log::trace!(target: "gagadown_ui", "ui_end window={window_id:?} viewport={viewport_id:?}");
++            output
+         };
+ 
+         // ------------------------------------------------------------
+@@ -1208,6 +1219,7 @@ fn render_immediate_viewport(
+         let (Some(window), Some(egui_winit)) = (&viewport.window, &mut viewport.egui_winit) else {
+             break 'input None;
+         };
++        log::trace!(target: "gagadown_ui", "popup_begin window={:?} viewport={:?} reveal={reveal}", window.id(), ids.this);
+         egui_winit::update_viewport_info(&mut viewport.info, egui_ctx, window, false);
+ 
+         let mut input = egui_winit.take_egui_input(window);
+@@ -1245,6 +1257,7 @@ fn render_immediate_viewport(
+     } = egui_ctx.run_ui(input, |ui| {
+         viewport_ui_cb(ui);
+     });
++    log::trace!(target: "gagadown_ui", "popup_ui_end viewport={:?}", ids.this);
+ 
+     // ------------------------------------------
+ 
+@@ -1296,6 +1309,7 @@ fn render_immediate_viewport(
+     if reveal {
+         window.set_visible(true);
+     }
++    log::trace!(target: "gagadown_ui", "popup_end window={:?} viewport={:?}", window.id(), ids.this);
+ 
+     egui_winit.handle_platform_output(window, platform_output);
+ 
+diff --git a/patches/egui-wgpu/src/winit.rs b/patches/egui-wgpu/src/winit.rs
+index f9db6b5..b056f78 100644
+--- a/patches/egui-wgpu/src/winit.rs
++++ b/patches/egui-wgpu/src/winit.rs
+@@ -245,6 +245,7 @@ impl Painter {
+             let render_state =
+                 RenderState::create(&self.config, &self.instance, Some(&surface), self.options)
+                     .await?;
++            log::debug!(target: "gagadown_ui", "gpu_backend backend={:?}", render_state.adapter.get_info().backend);
+             self.render_state = Some(render_state);
+         }
+         self.install_surface(surface, viewport_id, size.width, size.height, false);
+@@ -601,19 +602,24 @@ impl Painter {
+         let output_frame = {
+             profiling::scope!("get_current_texture");
+             // This is what vsync-waiting happens on my Mac.
++            log::trace!(target: "gagadown_ui", "gpu_acquire_begin window={:?} viewport={viewport_id:?}", window.id());
+             let start = web_time::Instant::now();
+             let output_frame = surface_state.surface.get_current_texture();
+-            vsync_sec += start.elapsed().as_secs_f32();
++            let elapsed = start.elapsed();
++            vsync_sec += elapsed.as_secs_f32();
++            log::trace!(target: "gagadown_ui", "gpu_acquire_end viewport={viewport_id:?} elapsed_ms={}", elapsed.as_millis());
+             output_frame
+         };
+ 
+         let output_frame = match output_frame {
+             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
++                log::debug!(target: "gagadown_ui", "gpu_frame_suboptimal viewport={viewport_id:?}");
+                 surface_state.needs_reconfigure = true;
+                 frame
+             }
+             other => {
++                log::debug!(target: "gagadown_ui", "gpu_frame_dropped viewport={viewport_id:?} status={other:?}");
+                 match (*self.config.on_surface_status)(&other) {
+                     SurfaceErrorAction::Reconfigure => {
+                         Self::configure_surface(surface_state, render_state, &self.config.surface);
+@@ -732,11 +738,14 @@ impl Painter {
+         {
+             profiling::scope!("Queue::submit");
+             // wgpu doesn't document where vsync can happen. Maybe here?
++            log::trace!(target: "gagadown_ui", "gpu_submit_begin viewport={viewport_id:?}");
+             let start = web_time::Instant::now();
+             render_state
+                 .queue
+                 .submit(core::iter::chain(user_cmd_bufs, [encoded]));
+-            vsync_sec += start.elapsed().as_secs_f32();
++            let elapsed = start.elapsed();
++            vsync_sec += elapsed.as_secs_f32();
++            log::trace!(target: "gagadown_ui", "gpu_submit_end viewport={viewport_id:?} elapsed_ms={}", elapsed.as_millis());
+         };
+ 
+         // Ensure that the queue guard does not do unnecessary work when dropped
+@@ -770,9 +779,12 @@ impl Painter {
+         {
+             profiling::scope!("present");
+             // wgpu doesn't document where vsync can happen. Maybe here?
++            log::trace!(target: "gagadown_ui", "gpu_present_begin viewport={viewport_id:?}");
+             let start = web_time::Instant::now();
+             render_state.queue.present(output_frame);
+-            vsync_sec += start.elapsed().as_secs_f32();
++            let elapsed = start.elapsed();
++            vsync_sec += elapsed.as_secs_f32();
++            log::trace!(target: "gagadown_ui", "gpu_present_end viewport={viewport_id:?} elapsed_ms={}", elapsed.as_millis());
+         }
+ 
+         vsync_sec
