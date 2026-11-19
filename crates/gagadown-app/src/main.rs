@@ -25,7 +25,7 @@ const PAGE_TRANSITION_OFFSET: f32 = 18.0;
 const PAGE_EXIT_END: f32 = 0.55;
 const PAGE_ENTER_START: f32 = 0.32;
 const NAV_INDICATOR_HEIGHT: f32 = 48.0;
-const NAV_INDICATOR_EXTEND: f32 = 24.0;
+const NAV_INDICATOR_SECS: f32 = 0.28;
 #[cfg(debug_assertions)]
 const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
 #[cfg(not(debug_assertions))]
@@ -207,45 +207,27 @@ impl NavIndicator {
     }
 
     fn sample(&mut self, now: Instant) -> (f32, f32, bool) {
-        // Keep the three edge actions sequential: extend one edge, translate as a
-        // rigid shape, then let the opposite edge catch up and contract.
-        let t = (now.duration_since(self.started).as_secs_f32() / PAGE_TRANSITION_SECS).clamp(0.0, 1.0);
+        let t = (now.duration_since(self.started).as_secs_f32() / NAV_INDICATOR_SECS).clamp(0.0, 1.0);
         let direction = if self.to_y >= self.from_y { 1.0 } else { -1.0 };
         let start_top = self.from_y - self.from_height * 0.5;
         let start_bottom = self.from_y + self.from_height * 0.5;
         let target_top = self.to_y - NAV_INDICATOR_HEIGHT * 0.5;
         let target_bottom = self.to_y + NAV_INDICATOR_HEIGHT * 0.5;
-        let (top, bottom) = if t < 0.35 {
-            let extend = page_ease(t / 0.35) * NAV_INDICATOR_EXTEND;
-            if direction > 0.0 {
-                (start_top, start_bottom + extend)
-            } else {
-                (start_top - extend, start_bottom)
-            }
-        } else if t < 0.75 {
-            let translate = page_ease((t - 0.35) / 0.40);
-            let (stretched_top, stretched_bottom) = if direction > 0.0 {
-                (start_top, start_bottom + NAV_INDICATOR_EXTEND)
-            } else {
-                (start_top - NAV_INDICATOR_EXTEND, start_bottom)
-            };
-            let leading_start = if direction > 0.0 { stretched_bottom } else { stretched_top };
-            let leading_target = if direction > 0.0 { target_bottom } else { target_top };
-            let offset = (leading_target - leading_start) * translate;
-            (stretched_top + offset, stretched_bottom + offset)
+        // Both edges travel toward the target at the same time. The leading edge
+        // runs ahead (0.0-0.7) while the trailing edge follows offset (0.3-1.0),
+        // so the bar stretches slightly mid-flight but never pauses at one end.
+        let lead = page_ease((t / 0.7).clamp(0.0, 1.0));
+        let trail = page_ease(((t - 0.3) / 0.7).clamp(0.0, 1.0));
+        let (top, bottom) = if direction > 0.0 {
+            (
+                start_top + (target_top - start_top) * trail,
+                start_bottom + (target_bottom - start_bottom) * lead,
+            )
         } else {
-            let contract = page_ease((t - 0.75) / 0.25);
-            if direction > 0.0 {
-                let translate = target_bottom - (start_bottom + NAV_INDICATOR_EXTEND);
-                let top_start = start_top + translate;
-                let top = top_start + (target_top - top_start) * contract;
-                (top, target_bottom)
-            } else {
-                let translate = target_top - (start_top - NAV_INDICATOR_EXTEND);
-                let bottom_start = start_bottom + translate;
-                let bottom = bottom_start + (target_bottom - bottom_start) * contract;
-                (target_top, bottom)
-            }
+            (
+                start_top + (target_top - start_top) * lead,
+                start_bottom + (target_bottom - start_bottom) * trail,
+            )
         };
         let y = (top + bottom) * 0.5;
         let height = bottom - top;
@@ -1082,6 +1064,38 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
         clip.add(Shape::line(pts, Stroke::new(1.6, p.green)));
     }
     pt.text(r.right_top(), Align2::RIGHT_TOP, speed((max / 1.15) as f64), font(10.5), p.weak);
+
+    // Steam-style hover: highlight the bar under the pointer and show its speed/age.
+    if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
+        && r.contains(pos)
+    {
+        let i = ((pos.x - r.left()) / bw - slide - off as f32).floor();
+        if i >= 0.0 && (i as usize) < data.len() {
+            let i = i as usize;
+            let bx = r.left() + (off + i) as f32 * bw + slide * bw;
+            pt.rect_filled(
+                Rect::from_min_max(pos2(bx, r.top()), pos2(bx + bw, r.bottom())),
+                CornerRadius::ZERO,
+                p.accent.gamma_multiply(0.16),
+            );
+            let ago = data.len() - 1 - i;
+            let tip = if ago == 0 {
+                speed(data[i] as f64)
+            } else {
+                format!("{} · {} 秒前", speed(data[i] as f64), ago)
+            };
+            let tw = pt.layout_no_wrap(tip.clone(), font(11.5), p.text).size().x + 16.0;
+            let mut tr = Rect::from_center_size(pos2(pos.x, r.top() + 12.0), vec2(tw, 22.0));
+            tr = tr.translate(vec2(
+                (r.left() - tr.left()).max(0.0) - (tr.right() - r.right()).max(0.0),
+                0.0,
+            ));
+            pt.rect_filled(tr, CornerRadius::same(5), p.chrome);
+            pt.rect_stroke(tr, CornerRadius::same(5), Stroke::new(1.0, p.line), StrokeKind::Inside);
+            pt.text(tr.center(), Align2::CENTER_CENTER, tip, font(11.5), p.text);
+        }
+    }
+}
 
 struct UiTraceMakeWriter {
     tx: std::sync::mpsc::SyncSender<Vec<u8>>,
