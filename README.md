@@ -104,16 +104,18 @@ bash tools/package.sh
 
 在 Linux 上（原生包和 Flatpak 均有报告），主窗口留在当前工作区前台时，下载进度小窗通常响应正常。将主窗口移到其他工作区后，小窗可能出现数秒的交互延迟；主窗口退到托盘后，小窗可能无响应，恢复主窗口时也可能出现透明且不可交互的窗口。此时下载仍可能继续。根因待排查。
 
-用包含诊断代码的构建复现时，先正常退出已有实例，再选择对应的启动命令。日志写入标准错误，默认不开启：
+诊断默认关闭。使用包含诊断代码的构建复现时，先正常退出已有实例，再按需开启。日志与普通应用输出分离，写入数据目录的 `ui-debug.log`；每次启用时会重新创建该日志文件：
 
 ```bash
 # Flatpak
-flatpak run --env=GAGADOWN_UI_TRACE=1 dev.gagadown.GaGaDown 2> /tmp/gagadown-ui.log
-# 本地构建，强制走 X11 以对照 Flatpak
-GAGADOWN_UI_TRACE=1 GAGADOWN_FORCE_X11=1 ./target/release/GagaDown 2> /tmp/gagadown-ui.log
+flatpak run --env=GAGADOWN_UI_TRACE=1 dev.gagadown.GaGaDown
+# Flatpak 日志位于 ~/.var/app/dev.gagadown.GaGaDown/data/gagadown/ui-debug.log
+# 本地构建（Linux 默认即 X11/XWayland；调试原生 Wayland 可加 GAGADOWN_FORCE_WAYLAND=1）
+GAGADOWN_UI_TRACE=1 ./target/release/GagaDown
+# 本地日志位于 $XDG_DATA_HOME/gagadown/ui-debug.log（通常为 ~/.local/share/gagadown/ui-debug.log）
 ```
 
-抓取一段从主窗口在前台到切换工作区或退到托盘、随后小窗卡顿的日志，并记下触发时刻。新增诊断包含窗口事件、重绘转发及 GPU 提交和呈现耗时，不记录下载 URL 或文件名。
+抓取一段从主窗口在前台到切换工作区或退到托盘、随后小窗卡顿的日志，并记下触发时刻。诊断记录窗口事件处理、重绘调度、弹窗 UI/surface/绘制耗时，以及 GPU acquire、submit 和 present 阶段；日志异步写盘，避免文件 I/O 阻塞 UI 事件线程。不记录下载 URL 或文件名。
 
 <!-- LINK GROUP -->
 

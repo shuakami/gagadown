@@ -20,6 +20,8 @@ struct SurfaceState {
     resizing: bool,
     needs_reconfigure: bool,
     needs_recreate: bool,
+    paced: bool,
+    last_present: Option<web_time::Instant>,
 }
 
 /// Everything you need to paint egui with [`wgpu`] on [`winit`].
@@ -94,7 +96,7 @@ impl Painter {
     }
 
     fn configure_surface(
-        surface_state: &SurfaceState,
+        surface_state: &mut SurfaceState,
         render_state: &RenderState,
         config: &SurfaceConfig,
     ) {
@@ -104,6 +106,38 @@ impl Painter {
             present_mode,
             desired_maximum_frame_latency,
         } = *config;
+
+        // On Linux a vsync present mode (Fifo/AutoVsync) blocks `get_current_texture`/`present`
+        // forever while the window sits on an inactive workspace, freezing every other viewport
+        // on this thread too (egui#5836, wgpu#8597). Prefer a non-blocking mode and pace frames
+        // ourselves in `paint_and_update_textures`.
+        #[cfg(target_os = "linux")]
+        let present_mode = {
+            let chosen = if matches!(
+                present_mode,
+                wgpu::PresentMode::AutoVsync | wgpu::PresentMode::Fifo
+            ) {
+                let modes = surface_state
+                    .surface
+                    .get_capabilities(&render_state.adapter)
+                    .present_modes;
+                if modes.contains(&wgpu::PresentMode::Mailbox) {
+                    wgpu::PresentMode::Mailbox
+                } else if modes.contains(&wgpu::PresentMode::Immediate) {
+                    wgpu::PresentMode::Immediate
+                } else {
+                    present_mode
+                }
+            } else {
+                present_mode
+            };
+            log::debug!(target: "gagadown_ui", "gpu_present_mode requested={:?} chosen={:?}", present_mode, chosen);
+            surface_state.paced = matches!(
+                chosen,
+                wgpu::PresentMode::Mailbox | wgpu::PresentMode::Immediate
+            );
+            chosen
+        };
 
         // Transaction presentation can hold a drawable during AppKit live resize. Keep the
         // configured low-latency path normally, but use three Metal drawables while resizing.
@@ -299,6 +333,8 @@ impl Painter {
                 resizing,
                 needs_reconfigure: false,
                 needs_recreate: false,
+                paced: false,
+                last_present: None,
             },
         );
         let Some(width) = NonZeroU32::new(width) else {
@@ -599,6 +635,25 @@ impl Painter {
             surface_state.needs_reconfigure = false;
         }
 
+        // A non-blocking present mode means nothing throttles us anymore; pace each
+        // surface to its monitor's refresh rate so repaints don't spin.
+        if surface_state.paced
+            && let Some(last_present) = surface_state.last_present
+        {
+            let refresh_mhz = window
+                .current_monitor()
+                .and_then(|m| m.refresh_rate_millihertz())
+                .map_or(60_000, |mhz| mhz.clamp(30_000, 240_000));
+            let interval = std::time::Duration::from_secs_f64(1000.0 / f64::from(refresh_mhz));
+            let elapsed = last_present.elapsed();
+            if elapsed < interval {
+                let sleep = interval - elapsed;
+                std::thread::sleep(sleep);
+                vsync_sec += sleep.as_secs_f32();
+                log::trace!(target: "gagadown_ui", "gpu_pace viewport={viewport_id:?} sleep_ms={}", sleep.as_millis());
+            }
+        }
+
         let output_frame = {
             profiling::scope!("get_current_texture");
             // This is what vsync-waiting happens on my Mac.
@@ -786,6 +841,8 @@ impl Painter {
             vsync_sec += elapsed.as_secs_f32();
             log::trace!(target: "gagadown_ui", "gpu_present_end viewport={viewport_id:?} elapsed_ms={}", elapsed.as_millis());
         }
+
+        surface_state.last_present = Some(web_time::Instant::now());
 
         vsync_sec
     }

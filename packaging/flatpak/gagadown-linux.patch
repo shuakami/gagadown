@@ -313,10 +313,10 @@ index a4a4364..a792b30 100644
 +ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 +winit = { version = "0.30.13", default-features = false, features = ["x11"] }
 diff --git a/crates/gagadown-app/src/main.rs b/crates/gagadown-app/src/main.rs
-index cbfba48..7372f9e 100644
+index cbfba48..c6dd00f 100644
 --- a/crates/gagadown-app/src/main.rs
 +++ b/crates/gagadown-app/src/main.rs
-@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
+@@ -18,13 +18,14 @@ use std::time::{Duration, Instant};
  use uuid::Uuid;
  
  static ICON: &[u8] = include_bytes!("../../../assets/icon_256.rgba");
@@ -324,7 +324,76 @@ index cbfba48..7372f9e 100644
  const DEFAULT_ACCENT: Color32 = Color32::from_rgb(0, 120, 212);
  const PAGE_TRANSITION_SECS: f32 = 0.42;
  const PAGE_TRANSITION_OFFSET: f32 = 18.0;
-@@ -640,10 +641,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
+ const PAGE_EXIT_END: f32 = 0.55;
+ const PAGE_ENTER_START: f32 = 0.32;
+ const NAV_INDICATOR_HEIGHT: f32 = 48.0;
+-const NAV_INDICATOR_EXTEND: f32 = 24.0;
++const NAV_INDICATOR_SECS: f32 = 0.28;
+ #[cfg(debug_assertions)]
+ const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
+ #[cfg(not(debug_assertions))]
+@@ -206,45 +207,27 @@ impl NavIndicator {
+     }
+ 
+     fn sample(&mut self, now: Instant) -> (f32, f32, bool) {
+-        // Keep the three edge actions sequential: extend one edge, translate as a
+-        // rigid shape, then let the opposite edge catch up and contract.
+-        let t = (now.duration_since(self.started).as_secs_f32() / PAGE_TRANSITION_SECS).clamp(0.0, 1.0);
++        let t = (now.duration_since(self.started).as_secs_f32() / NAV_INDICATOR_SECS).clamp(0.0, 1.0);
+         let direction = if self.to_y >= self.from_y { 1.0 } else { -1.0 };
+         let start_top = self.from_y - self.from_height * 0.5;
+         let start_bottom = self.from_y + self.from_height * 0.5;
+         let target_top = self.to_y - NAV_INDICATOR_HEIGHT * 0.5;
+         let target_bottom = self.to_y + NAV_INDICATOR_HEIGHT * 0.5;
+-        let (top, bottom) = if t < 0.35 {
+-            let extend = page_ease(t / 0.35) * NAV_INDICATOR_EXTEND;
+-            if direction > 0.0 {
+-                (start_top, start_bottom + extend)
+-            } else {
+-                (start_top - extend, start_bottom)
+-            }
+-        } else if t < 0.75 {
+-            let translate = page_ease((t - 0.35) / 0.40);
+-            let (stretched_top, stretched_bottom) = if direction > 0.0 {
+-                (start_top, start_bottom + NAV_INDICATOR_EXTEND)
+-            } else {
+-                (start_top - NAV_INDICATOR_EXTEND, start_bottom)
+-            };
+-            let leading_start = if direction > 0.0 { stretched_bottom } else { stretched_top };
+-            let leading_target = if direction > 0.0 { target_bottom } else { target_top };
+-            let offset = (leading_target - leading_start) * translate;
+-            (stretched_top + offset, stretched_bottom + offset)
++        // Both edges travel toward the target at the same time. The leading edge
++        // runs ahead (0.0-0.7) while the trailing edge follows offset (0.3-1.0),
++        // so the bar stretches slightly mid-flight but never pauses at one end.
++        let lead = page_ease((t / 0.7).clamp(0.0, 1.0));
++        let trail = page_ease(((t - 0.3) / 0.7).clamp(0.0, 1.0));
++        let (top, bottom) = if direction > 0.0 {
++            (
++                start_top + (target_top - start_top) * trail,
++                start_bottom + (target_bottom - start_bottom) * lead,
++            )
+         } else {
+-            let contract = page_ease((t - 0.75) / 0.25);
+-            if direction > 0.0 {
+-                let translate = target_bottom - (start_bottom + NAV_INDICATOR_EXTEND);
+-                let top_start = start_top + translate;
+-                let top = top_start + (target_top - top_start) * contract;
+-                (top, target_bottom)
+-            } else {
+-                let translate = target_top - (start_top - NAV_INDICATOR_EXTEND);
+-                let bottom_start = start_bottom + translate;
+-                let bottom = bottom_start + (target_bottom - bottom_start) * contract;
+-                (target_top, bottom)
+-            }
++            (
++                start_top + (target_top - start_top) * lead,
++                start_bottom + (target_bottom - start_bottom) * trail,
++            )
+         };
+         let y = (top + bottom) * 0.5;
+         let height = bottom - top;
+@@ -640,10 +623,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
      ("icons/128.png", include_bytes!("../../../extension/icons/128.png")),
  ];
  
@@ -337,7 +406,7 @@ index cbfba48..7372f9e 100644
  
  struct ExtGuide {
      browser: usize,
-@@ -654,22 +653,35 @@ struct ExtGuide {
+@@ -654,22 +635,35 @@ struct ExtGuide {
  struct Browser {
      key: &'static str,
      name: &'static str,
@@ -385,31 +454,175 @@ index cbfba48..7372f9e 100644
  }
  
  /// Writes the bundled extension into `<data>/extension`, touching only files that changed.
-@@ -1074,6 +1086,23 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
+@@ -1070,10 +1064,167 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
+         clip.add(Shape::line(pts, Stroke::new(1.6, p.green)));
+     }
+     pt.text(r.right_top(), Align2::RIGHT_TOP, speed((max / 1.15) as f64), font(10.5), p.weak);
++
++    // Steam-style hover: highlight the bar under the pointer and show its speed/age.
++    if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
++        && r.contains(pos)
++    {
++        let i = ((pos.x - r.left()) / bw - slide - off as f32).floor();
++        if i >= 0.0 && (i as usize) < data.len() {
++            let i = i as usize;
++            let bx = r.left() + (off + i) as f32 * bw + slide * bw;
++            pt.rect_filled(
++                Rect::from_min_max(pos2(bx, r.top()), pos2(bx + bw, r.bottom())),
++                CornerRadius::ZERO,
++                p.accent.gamma_multiply(0.16),
++            );
++            let ago = data.len() - 1 - i;
++            let tip = if ago == 0 {
++                speed(data[i] as f64)
++            } else {
++                format!("{} · {} 秒前", speed(data[i] as f64), ago)
++            };
++            let tw = pt.layout_no_wrap(tip.clone(), font(11.5), p.text).size().x + 16.0;
++            let mut tr = Rect::from_center_size(pos2(pos.x, r.top() + 12.0), vec2(tw, 22.0));
++            tr = tr.translate(vec2(
++                (r.left() - tr.left()).max(0.0) - (tr.right() - r.right()).max(0.0),
++                0.0,
++            ));
++            pt.rect_filled(tr, CornerRadius::same(5), p.chrome);
++            pt.rect_stroke(tr, CornerRadius::same(5), Stroke::new(1.0, p.line), StrokeKind::Inside);
++            pt.text(tr.center(), Align2::CENTER_CENTER, tip, font(11.5), p.text);
++        }
++    }
++}
++
++struct UiTraceMakeWriter {
++    tx: std::sync::mpsc::SyncSender<Vec<u8>>,
++    dropped: std::sync::Arc<std::sync::atomic::AtomicU64>,
++}
++
++struct UiTraceLine {
++    tx: std::sync::mpsc::SyncSender<Vec<u8>>,
++    dropped: std::sync::Arc<std::sync::atomic::AtomicU64>,
++    bytes: Vec<u8>,
++}
++
++impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for UiTraceMakeWriter {
++    type Writer = UiTraceLine;
++
++    fn make_writer(&'a self) -> Self::Writer {
++        UiTraceLine {
++            tx: self.tx.clone(),
++            dropped: self.dropped.clone(),
++            bytes: Vec::with_capacity(256),
++        }
++    }
++}
++
++impl std::io::Write for UiTraceLine {
++    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
++        self.bytes.extend_from_slice(bytes);
++        Ok(bytes.len())
++    }
++
++    fn flush(&mut self) -> std::io::Result<()> {
++        Ok(())
++    }
++}
++
++impl Drop for UiTraceLine {
++    fn drop(&mut self) {
++        if !self.bytes.is_empty()
++            && self.tx.try_send(std::mem::take(&mut self.bytes)).is_err()
++        {
++            self.dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        }
++    }
+ }
  
  /// Writes `crash.log` on panic and `freeze.log` when the UI thread is stuck in one stage.
  fn install_diagnostics(dir: std::path::PathBuf) {
 +    if std::env::var_os("GAGADOWN_UI_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")) {
 +        use tracing_subscriber::{filter::Targets, prelude::*};
 +
-+        let trace = tracing_subscriber::fmt::layer()
-+            .with_timer(tracing_subscriber::fmt::time::uptime())
-+            .with_ansi(false)
-+            .with_writer(std::io::stderr);
-+        let result = tracing_subscriber::registry()
-+            .with(trace)
-+            .with(Targets::new().with_target("gagadown_ui", tracing::Level::TRACE))
-+            .try_init();
-+        match result {
-+            Ok(()) => tracing::info!(target: "gagadown_ui", "UI trace enabled"),
-+            Err(err) => eprintln!("GaGaDown: failed to initialize UI trace: {err}"),
-+        }
++        let log_path = dir.join("ui-debug.log");
++        let log_file = std::fs::OpenOptions::new()
++            .create(true)
++            .truncate(true)
++            .write(true)
++            .open(&log_path);
++        let log_file = match log_file {
++            Ok(file) => Some(file),
++            Err(err) => {
++                eprintln!("GaGaDown: cannot open UI diagnostic log {}: {err}", log_path.display());
++                // Keep the normal crash/freeze diagnostics installed below.
++                None
++            }
++        };
++
++        if let Some(log_file) = log_file {
++            // Trace events are frequent; queue them off the UI/event-loop thread so
++            // filesystem latency cannot become part of the stall being measured.
++            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4096);
++            let dropped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
++            let writer_dropped = dropped.clone();
++            match std::thread::Builder::new()
++                .name("ui-trace-writer".into())
++                .spawn(move || {
++                    use std::io::Write;
++                    let mut out = std::io::BufWriter::new(log_file);
++                    let mut pending = 0usize;
++                    loop {
++                        match rx.recv_timeout(Duration::from_millis(250)) {
++                            Ok(line) => {
++                                if out.write_all(&line).is_err() {
++                                    break;
++                                }
++                                pending += 1;
++                                if pending >= 64 {
++                                    if out.flush().is_err() {
++                                        break;
++                                    }
++                                    pending = 0;
++                                }
++                            }
++                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
++                                if pending > 0 && out.flush().is_err() {
++                                    break;
++                                }
++                                pending = 0;
++                            }
++                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
++                        }
++                        let count = writer_dropped.swap(0, std::sync::atomic::Ordering::Relaxed);
++                        if count > 0 {
++                            let _ = writeln!(out, "[diagnostic] dropped {count} UI trace records (writer queue full)");
++                            let _ = out.flush();
++                            pending = 0;
++                        }
++                    }
++                    let _ = out.flush();
++                })
++            {
++                Err(err) => eprintln!("GaGaDown: cannot start UI diagnostic writer: {err}"),
++                Ok(_) => {
++                    let make_writer = UiTraceMakeWriter { tx, dropped };
++                    let trace = tracing_subscriber::fmt::layer()
++                        .with_timer(tracing_subscriber::fmt::time::uptime())
++                        .with_ansi(false)
++                        .with_writer(make_writer);
++                    let result = tracing_subscriber::registry()
++                        .with(trace)
++                        .with(Targets::new().with_target("gagadown_ui", tracing::Level::TRACE))
++                        .try_init();
++                    match result {
++                        Ok(()) => tracing::info!(target: "gagadown_ui", log_path = %log_path.display(), "UI trace enabled"),
++                        Err(err) => eprintln!("GaGaDown: failed to initialize UI trace: {err}"),
++                    }
++                }
++            }
++        };
 +    }
 +
      fn append(path: &Path, line: &str) {
          use std::io::Write;
          if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-@@ -1107,6 +1136,7 @@ fn install_diagnostics(dir: std::path::PathBuf) {
+@@ -1107,6 +1258,7 @@ fn install_diagnostics(dir: std::path::PathBuf) {
              if t > tier {
                  tier = t;
                  append(&freeze, &format!("[{}] 界面线程卡在「{}」已 {secs} 秒\n", now_secs(), eframe::stall::name(stage)));
@@ -417,7 +630,7 @@ index cbfba48..7372f9e 100644
              }
          }
      });
-@@ -1604,14 +1634,6 @@ mod win {
+@@ -1604,14 +1756,6 @@ mod win {
              .filter(|p| p.exists())
      }
  
@@ -432,7 +645,7 @@ index cbfba48..7372f9e 100644
      pub fn set_autostart(on: bool) {
          let Ok((k, _)) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run") else {
              return;
-@@ -1701,14 +1723,31 @@ mod win {
+@@ -1701,14 +1845,31 @@ mod win {
          }
      }
  
@@ -468,7 +681,7 @@ index cbfba48..7372f9e 100644
      pub fn tray(
          _ctx: eframe::egui::Context,
          _rgba: Vec<u8>,
-@@ -1722,6 +1761,46 @@ mod win {
+@@ -1722,6 +1883,46 @@ mod win {
      }
  }
  
@@ -515,7 +728,7 @@ index cbfba48..7372f9e 100644
  fn apply_style(ctx: &egui::Context, accent: Color32) {
      for (theme, dark) in [(egui::Theme::Light, false), (egui::Theme::Dark, true)] {
          let p = Pal::new(dark, accent);
-@@ -1778,6 +1857,8 @@ fn setup_fonts(ctx: &egui::Context) {
+@@ -1778,6 +1979,8 @@ fn setup_fonts(ctx: &egui::Context) {
      let mut fonts = egui::FontDefinitions::default();
      let read = |c: &[&str]| c.iter().find_map(|p| std::fs::read(p).ok());
      let mut base = Vec::new();
@@ -524,7 +737,7 @@ index cbfba48..7372f9e 100644
      if let Some(d) = read(&[
          "C:\\Windows\\Fonts\\msyh.ttc",
          "C:\\Windows\\Fonts\\msyh.ttf",
-@@ -1804,7 +1885,7 @@ fn setup_fonts(ctx: &egui::Context) {
+@@ -1804,7 +2007,7 @@ fn setup_fonts(ctx: &egui::Context) {
      icons.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
      fonts.families.insert(FontFamily::Name("icons".into()), icons);
      if !base.is_empty() {
@@ -533,7 +746,7 @@ index cbfba48..7372f9e 100644
      }
      let mut bold_fam: Vec<String> = Vec::new();
      if let Some(d) = read(&["C:\\Windows\\Fonts\\msyhbd.ttc", "C:\\Windows\\Fonts\\msyhbd.ttf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]) {
-@@ -1893,12 +1974,16 @@ impl App {
+@@ -1893,12 +2096,16 @@ impl App {
  
      fn install_extension(&mut self, ctx: &egui::Context, i: usize) {
          let b = self.browsers.get(i).cloned();
@@ -555,7 +768,7 @@ index cbfba48..7372f9e 100644
          }
          let dir = match unpack_extension(self.engine.data_dir()) {
              Ok(d) => d,
-@@ -1907,8 +1992,10 @@ impl App {
+@@ -1907,8 +2114,10 @@ impl App {
          match b {
              Some(b) => {
                  ctx.copy_text(b.page.to_string());
@@ -568,7 +781,7 @@ index cbfba48..7372f9e 100644
              }
              None => {
                  ctx.copy_text(dir.display().to_string());
-@@ -2161,7 +2248,12 @@ impl App {
+@@ -2161,7 +2370,12 @@ impl App {
          let maxr = close.translate(vec2(-bw, 0.0));
          let minr = maxr.translate(vec2(-bw, 0.0));
          if chrome_btn(ui, close, Glyph::Close, p) {
@@ -582,7 +795,7 @@ index cbfba48..7372f9e 100644
          }
          if chrome_btn(ui, maxr, if maximized { Glyph::Restore } else { Glyph::Max }, p) {
              ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-@@ -2856,7 +2948,7 @@ impl App {
+@@ -2856,7 +3070,7 @@ impl App {
          let (mut act, mut copy, mut open, mut tab, mut copy_page, mut copy_token) = (None, false, false, None, None, false);
          let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
          let browsers = self.browsers.clone();
@@ -591,7 +804,7 @@ index cbfba48..7372f9e 100644
          let sel = self.ext_tab.min(browsers.len().saturating_sub(1));
          let on = browsers.get(sel).is_some_and(|b| self.ext_connected(b.key));
          let since = self.ext_guide.as_ref().filter(|g| g.browser == sel).map(|g| g.since);
-@@ -2927,7 +3019,8 @@ impl App {
+@@ -2927,7 +3141,8 @@ impl App {
                  let (st, sc) = if on { ("已连接", p.green) } else { ("未连接", p.weak) };
                  text_line(&pt, pos2(tx, r.center().y + 11.0), Align2::LEFT_CENTER, st, font(12.0), sc, 200.0);
                  let br = Rect::from_min_size(pos2(r.right() - 112.0, r.center().y - 15.0), vec2(96.0, 30.0));
@@ -601,7 +814,7 @@ index cbfba48..7372f9e 100644
                      act = Some(sel);
                  }
  
-@@ -2940,20 +3033,36 @@ impl App {
+@@ -2940,20 +3155,36 @@ impl App {
                  ui.painter().rect(token_rect, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
                  text_line(ui.painter(), pos2(token_rect.left() + 8.0, token_rect.center().y), Align2::LEFT_CENTER, self.engine.extension_api_token(), FontId::monospace(10.0), p.text, token_rect.width() - 16.0);
  
@@ -647,7 +860,7 @@ index cbfba48..7372f9e 100644
                  let ind = 30.0;
                  for (n, s) in steps.iter().enumerate() {
                      let (r, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
-@@ -2961,36 +3070,46 @@ impl App {
+@@ -2961,36 +3192,46 @@ impl App {
                      let c = pos2(r.left() + 10.0, r.center().y);
                      pt.circle_filled(c, 10.0, p.accent.gamma_multiply(0.14));
                      pt.text(c, Align2::CENTER_CENTER, (n + 1).to_string(), font(11.5), p.accent);
@@ -712,7 +925,7 @@ index cbfba48..7372f9e 100644
                  }
              });
          });
-@@ -3101,18 +3220,23 @@ impl App {
+@@ -3101,18 +3342,23 @@ impl App {
          let y = r.top() + 126.0;
          let mut lx = x;
          let repo = "https://github.com/shuakami/gagadown";
@@ -740,7 +953,15 @@ index cbfba48..7372f9e 100644
                  }
              }
              lx = lr.right() + 18.0;
-@@ -3948,10 +4072,10 @@ fn main() -> eframe::Result {
+@@ -3530,6 +3776,7 @@ impl App {
+                 .with_decorations(false)
+                 .with_resizable(false)
+                 .with_always_on_top()
++                .with_app_id("dev.gagadown.GaGaDown")
+                 .with_icon(self.icon.clone());
+             let mut close = false;
+             ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("popup", pop.key)), builder, |ui, _| {
+@@ -3948,10 +4195,10 @@ fn main() -> eframe::Result {
      }
      let icon = Arc::new(egui::IconData { rgba: ICON.to_vec(), width: 256, height: 256 });
      let accent = win::accent().unwrap_or(DEFAULT_ACCENT);
@@ -753,12 +974,16 @@ index cbfba48..7372f9e 100644
              .with_inner_size([1120.0, 720.0])
              .with_min_inner_size([760.0, 480.0])
              .with_decorations(false)
-@@ -3959,6 +4083,13 @@ fn main() -> eframe::Result {
+@@ -3959,6 +4206,17 @@ fn main() -> eframe::Result {
          centered: true,
          ..Default::default()
      };
++    // Wayland can't unmap a window, so close-to-tray (Visible(false)) only works
++    // under X11/XWayland. Default to it for tray support (DISPLAY is always set
++    // when XWayland is available); GAGADOWN_FORCE_WAYLAND opts back into the
++    // Wayland backend for debugging.
 +    #[cfg(target_os = "linux")]
-+    if std::env::var_os("GAGADOWN_FORCE_X11").is_some() {
++    if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_none() && std::env::var_os("DISPLAY").is_some() {
 +        use winit::platform::x11::EventLoopBuilderExtX11;
 +        opts.event_loop_builder = Some(Box::new(|builder| {
 +            builder.with_x11();
@@ -905,20 +1130,100 @@ index 8e98bf5..0883966 100644
      showUi();
    })();
    return true;
+diff --git a/patches/eframe/src/lib.rs b/patches/eframe/src/lib.rs
+index da1d800..b8769d4 100644
+--- a/patches/eframe/src/lib.rs
++++ b/patches/eframe/src/lib.rs
+@@ -186,6 +186,7 @@ pub mod stall {
+     pub const ROOT_PAINT: u32 = 5;
+     pub const CHILD_CREATE: u32 = 6;
+     pub const CHILD_PAINT: u32 = 7;
++    pub const SURFACE: u32 = 8;
+ 
+     pub fn now_ms() -> u64 {
+         std::time::SystemTime::now()
+@@ -203,6 +204,7 @@ pub mod stall {
+             ROOT_PAINT => "主窗口绘制/呈现",
+             CHILD_CREATE => "创建弹窗窗口",
+             CHILD_PAINT => "弹窗绘制/呈现",
++            SURFACE => "窗口 surface 更新",
+             _ => "未知",
+         }
+     }
 diff --git a/patches/eframe/src/native/run.rs b/patches/eframe/src/native/run.rs
-index 0759bf3..ff6ae31 100644
+index 0759bf3..8e79ee5 100644
 --- a/patches/eframe/src/native/run.rs
 +++ b/patches/eframe/src/native/run.rs
-@@ -199,12 +199,18 @@ impl<T: WinitApp> WinitAppWrapper<T> {
+@@ -102,14 +102,14 @@ impl<T: WinitApp> WinitAppWrapper<T> {
+         let mut exit = false;
+         let mut save = false;
+ 
+-        log::trace!("event_result: {event_result:?}");
++        log::trace!(target: "gagadown_ui", "event_result: {event_result:?}");
+ 
+         let mut event_result = event_result;
+ 
+         if cfg!(target_os = "windows")
+             && let Ok(EventResult::RepaintNow(window_id)) = event_result
+         {
+-            log::trace!("RepaintNow of {window_id:?}");
++            log::trace!(target: "gagadown_ui", "RepaintNow of {window_id:?}");
+             self.windows_next_repaint_times
+                 .insert(window_id, Instant::now());
+ 
+@@ -123,13 +123,13 @@ impl<T: WinitApp> WinitAppWrapper<T> {
+                 event_result
+             }
+             EventResult::RepaintNow(window_id) => {
+-                log::trace!("RepaintNow of {window_id:?}");
++                log::trace!(target: "gagadown_ui", "RepaintNow of {window_id:?}");
+                 self.windows_next_repaint_times
+                     .insert(window_id, Instant::now());
+                 event_result
+             }
+             EventResult::RepaintNext(window_id) => {
+-                log::trace!("RepaintNext of {window_id:?}");
++                log::trace!(target: "gagadown_ui", "RepaintNext of {window_id:?}");
+                 self.windows_next_repaint_times
+                     .insert(window_id, Instant::now());
+                 event_result
+@@ -183,10 +183,14 @@ impl<T: WinitApp> WinitAppWrapper<T> {
+             }
+         }
+ 
+-        self.check_redraw_requests(event_loop);
++        // Defer direct paints of hidden windows to `new_events`: on X11, winit
++        // drains user events in a `try_recv` loop, and painting here would push
++        // another `RequestRepaint` onto that channel, livelocking the loop so
++        // X input and `RedrawRequested` are never dispatched.
++        self.check_redraw_requests(event_loop, false);
+     }
+ 
+-    fn check_redraw_requests(&mut self, event_loop: &ActiveEventLoop) {
++    fn check_redraw_requests(&mut self, event_loop: &ActiveEventLoop, paint_hidden: bool) {
+         let _stage = crate::stall::Stage::enter(crate::stall::SCHEDULE);
+         let now = Instant::now();
+ 
+@@ -199,15 +203,31 @@ impl<T: WinitApp> WinitAppWrapper<T> {
                  }
  
                  if let Some(window) = self.winit_app.window(*window_id) {
 +                    let hidden = is_invisible_or_minimized(&window);
++                    let dispatch = if hidden {
++                        if paint_hidden { "direct" } else { "deferred" }
++                    } else {
++                        "winit"
++                    };
 +                    log::trace!(target: "gagadown_ui",
-+                        "redraw_due window={window_id:?} dispatch={} late_ms={}",
-+                        if hidden { "direct" } else { "winit" },
++                        "redraw_due window={window_id:?} dispatch={dispatch} late_ms={}",
 +                        now.saturating_duration_since(*repaint_time).as_millis(),
 +                    );
++                    if hidden && !paint_hidden {
++                        // Keep the past-due entry: `new_events` repaints it,
++                        // which also yields `WaitUntil(past)` below so winit
++                        // starts a new iteration immediately.
++                        return true;
++                    }
                      // On Windows, invisible windows don't receive RedrawRequested
                      // events, so pending viewport commands (e.g. Visible(true)) would
                      // never be processed. We collect these windows to paint them
@@ -928,8 +1233,21 @@ index 0759bf3..ff6ae31 100644
 +                    if hidden {
                          invisible_window_ids.push(*window_id);
                      } else {
-                         log::trace!("request_redraw for {window_id:?}");
-@@ -320,6 +326,10 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
+-                        log::trace!("request_redraw for {window_id:?}");
++                        log::trace!(target: "gagadown_ui", "request_redraw for {window_id:?}");
+                         // Don't switch to `ControlFlow::Poll` here. `request_redraw`
+                         // is enough to wake the event loop, and on Wayland the
+                         // `RedrawRequested` event is only delivered once the
+@@ -217,7 +237,7 @@ impl<T: WinitApp> WinitAppWrapper<T> {
+                         window.request_redraw();
+                     }
+                 } else {
+-                    log::trace!("No window found for {window_id:?}");
++                    log::trace!(target: "gagadown_ui", "No window found for {window_id:?}");
+                 }
+                 false
+             });
+@@ -320,10 +340,14 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
                          .winit_app
                          .egui_ctx()
                          .map_or(0, |ctx| ctx.cumulative_pass_nr_for(viewport_id));
@@ -940,28 +1258,75 @@ index 0759bf3..ff6ae31 100644
                      if current_pass_nr == cumulative_pass_nr
                          || current_pass_nr == cumulative_pass_nr + 1
                      {
-@@ -372,6 +382,17 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
+-                        log::trace!("UserEvent::RequestRepaint scheduling repaint at {when:?}");
++                        log::trace!(target: "gagadown_ui", "UserEvent::RequestRepaint scheduling repaint at {when:?}");
+                         if let Some(window_id) =
+                             self.winit_app.window_id_from_viewport_id(viewport_id)
+                         {
+@@ -343,7 +367,7 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
+                             Ok(EventResult::Wait)
+                         }
+                     } else {
+-                        log::trace!("Got outdated UserEvent::RequestRepaint");
++                        log::trace!(target: "gagadown_ui", "Got outdated UserEvent::RequestRepaint");
+                         Ok(EventResult::Wait) // old request - we've already repainted
+                     }
+                 }
+@@ -358,10 +382,10 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
+ 
+     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+         if let winit::event::StartCause::ResumeTimeReached { .. } = cause {
+-            log::trace!("Woke up to check next_repaint_time");
++            log::trace!(target: "gagadown_ui", "Woke up to check next_repaint_time");
+         }
+ 
+-        self.check_redraw_requests(event_loop);
++        self.check_redraw_requests(event_loop, true);
+     }
+ 
+     fn window_event(
+@@ -372,6 +396,18 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
      ) {
          profiling::function_scope!(egui_winit::short_window_event_description(&event));
          let _stage = crate::stall::Stage::enter(crate::stall::EVENT);
-+        if matches!(
++        let trace_event = matches!(
 +            event,
 +            winit::event::WindowEvent::RedrawRequested
 +                | winit::event::WindowEvent::MouseInput { .. }
 +                | winit::event::WindowEvent::CloseRequested
 +                | winit::event::WindowEvent::Occluded(_)
-+        ) {
-+            log::trace!(target: "gagadown_ui", "window_event window={window_id:?} event={}",
-+                egui_winit::short_window_event_description(&event),
-+            );
++        );
++        let event_description = trace_event.then(|| egui_winit::short_window_event_description(&event));
++        let event_started = Instant::now();
++        if let Some(description) = event_description {
++            log::trace!(target: "gagadown_ui", "window_event_begin window={window_id:?} event={description}");
 +        }
  
          // Nb: Make sure this guard is dropped after this function returns.
          event_loop_context::with_event_loop_context(event_loop, move || {
+@@ -383,6 +419,9 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
+             };
+ 
+             self.handle_event_result(event_loop, event_result);
++            if let Some(description) = event_description {
++                log::trace!(target: "gagadown_ui", "window_event_end window={window_id:?} event={description} elapsed_ms={}", event_started.elapsed().as_millis());
++            }
+         });
+     }
+ }
 diff --git a/patches/eframe/src/native/wgpu_integration.rs b/patches/eframe/src/native/wgpu_integration.rs
-index 61629a3..8f756af 100644
+index 61629a3..97b4918 100644
 --- a/patches/eframe/src/native/wgpu_integration.rs
 +++ b/patches/eframe/src/native/wgpu_integration.rs
+@@ -282,7 +282,7 @@ impl<'app> WgpuWinitApp<'app> {
+             let event_loop_proxy = Arc::clone(&self.repaint_proxy);
+ 
+             egui_ctx.set_request_repaint_callback(move |info| {
+-                log::trace!("request_repaint_callback: {info:?}");
++                log::trace!(target: "gagadown_ui", "request_repaint_callback: {info:?}");
+                 let when = Instant::now() + info.delay;
+                 let cumulative_pass_nr = info.current_cumulative_pass_nr;
+ 
 @@ -647,6 +647,10 @@ impl WgpuWinitRunning<'_> {
                      if let Some(viewport) = viewports.get(&viewport.ids.parent)
                          && let Some(window) = viewport.window.as_ref()
@@ -981,7 +1346,18 @@ index 61629a3..8f756af 100644
  
              // winit never reports `Occluded` on Windows, so a window hidden with `Visible(false)`
              // looked visible here. Presenting to a hidden window stalls in `get_current_texture`
-@@ -693,6 +698,9 @@ impl WgpuWinitRunning<'_> {
+@@ -681,7 +686,10 @@ impl WgpuWinitRunning<'_> {
+ 
+             {
+                 profiling::scope!("set_window");
++                let _stage = crate::stall::Stage::enter(crate::stall::SURFACE);
++                let set_window_started = Instant::now();
+                 pollster::block_on(painter.set_window(viewport_id, Some(Arc::clone(window))))?;
++                log::trace!(target: "gagadown_ui", "set_window_end window={window_id:?} viewport={viewport_id:?} elapsed_ms={}", set_window_started.elapsed().as_millis());
+             }
+ 
+             let Some(egui_winit) = egui_winit.as_mut() else {
+@@ -693,6 +701,9 @@ impl WgpuWinitRunning<'_> {
                  || is_viewport_or_descendant_visible(viewports, viewport_id)
                  || (viewport_id == ViewportId::ROOT
                      && crate::KEEP_ROOT_UI.load(std::sync::atomic::Ordering::Relaxed));
@@ -991,47 +1367,183 @@ index 61629a3..8f756af 100644
  
              integration.pre_update();
  
-@@ -769,7 +777,10 @@ impl WgpuWinitRunning<'_> {
+@@ -769,7 +780,11 @@ impl WgpuWinitRunning<'_> {
          // so make sure we hold no locks here!
          let full_output = {
              let _stage = crate::stall::Stage::enter(crate::stall::UPDATE);
 -            integration.update(app.as_mut(), viewport_ui_cb.as_deref(), raw_input)
++            let started = Instant::now();
 +            log::trace!(target: "gagadown_ui", "ui_begin window={window_id:?} viewport={viewport_id:?}");
 +            let output = integration.update(app.as_mut(), viewport_ui_cb.as_deref(), raw_input);
-+            log::trace!(target: "gagadown_ui", "ui_end window={window_id:?} viewport={viewport_id:?}");
++            log::trace!(target: "gagadown_ui", "ui_end window={window_id:?} viewport={viewport_id:?} elapsed_ms={}", started.elapsed().as_millis());
 +            output
          };
  
          // ------------------------------------------------------------
-@@ -1208,6 +1219,7 @@ fn render_immediate_viewport(
+@@ -826,6 +841,7 @@ impl WgpuWinitRunning<'_> {
+                 }
+             });
+             let _stage = crate::stall::Stage::enter(crate::stall::ROOT_PAINT);
++            let paint_started = Instant::now();
+             let vsync_secs = painter.paint_and_update_textures(
+                 viewport_id,
+                 pixels_per_point,
+@@ -835,6 +851,7 @@ impl WgpuWinitRunning<'_> {
+                 screenshot_commands,
+                 window,
+             );
++            log::trace!(target: "gagadown_ui", "root_paint_end window={window_id:?} viewport={viewport_id:?} elapsed_ms={}", paint_started.elapsed().as_millis());
+ 
+             for action in viewport.actions_requested.drain(..) {
+                 match action {
+@@ -1167,6 +1184,7 @@ fn render_immediate_viewport(
+     immediate_viewport: ImmediateViewport<'_>,
+ ) {
+     profiling::function_scope!();
++    let popup_started = Instant::now();
+ 
+     let ImmediateViewport {
+         ids,
+@@ -1193,6 +1211,8 @@ fn render_immediate_viewport(
+             painter,
+         );
+         if viewport.window.is_none() {
++            let create_started = Instant::now();
++            log::trace!(target: "gagadown_ui", "popup_create_begin viewport={:?}", ids.this);
+             event_loop_context::with_current_event_loop(|event_loop| {
+                 let _stage = crate::stall::Stage::enter(crate::stall::CHILD_CREATE);
+                 // Create hidden and show after the first paint, like the root, so no blank
+@@ -1203,12 +1223,14 @@ fn render_immediate_viewport(
+                 viewport.builder.visible = wanted;
+                 reveal = wanted != Some(false) && viewport.window.is_some();
+             });
++            log::trace!(target: "gagadown_ui", "popup_create_end viewport={:?} created={} elapsed_ms={}", ids.this, viewport.window.is_some(), create_started.elapsed().as_millis());
+         }
+ 
          let (Some(window), Some(egui_winit)) = (&viewport.window, &mut viewport.egui_winit) else {
              break 'input None;
          };
-+        log::trace!(target: "gagadown_ui", "popup_begin window={:?} viewport={:?} reveal={reveal}", window.id(), ids.this);
          egui_winit::update_viewport_info(&mut viewport.info, egui_ctx, window, false);
++        log::trace!(target: "gagadown_ui", "popup_begin window={:?} viewport={:?} reveal={reveal} visible={:?} minimized={:?} occluded={:?} setup_elapsed_ms={}", window.id(), ids.this, window.is_visible(), window.is_minimized(), viewport.info.occluded, popup_started.elapsed().as_millis());
  
          let mut input = egui_winit.take_egui_input(window);
-@@ -1245,6 +1257,7 @@ fn render_immediate_viewport(
+         input.viewports = viewports
+@@ -1236,6 +1258,7 @@ fn render_immediate_viewport(
+ 
+     // Run the user code, which could re-entrantly call this function again (!).
+     // Make sure no locks are held during this call.
++    let ui_started = Instant::now();
+     let egui::FullOutput {
+         platform_output,
+         textures_delta,
+@@ -1245,6 +1268,7 @@ fn render_immediate_viewport(
      } = egui_ctx.run_ui(input, |ui| {
          viewport_ui_cb(ui);
      });
-+    log::trace!(target: "gagadown_ui", "popup_ui_end viewport={:?}", ids.this);
++    log::trace!(target: "gagadown_ui", "popup_ui_end viewport={:?} elapsed_ms={}", ids.this, ui_started.elapsed().as_millis());
  
      // ------------------------------------------
  
-@@ -1296,6 +1309,7 @@ fn render_immediate_viewport(
+@@ -1269,18 +1293,22 @@ fn render_immediate_viewport(
+ 
+     {
+         profiling::scope!("set_window");
++        let _stage = crate::stall::Stage::enter(crate::stall::SURFACE);
++        let set_window_started = Instant::now();
+         if let Err(err) = pollster::block_on(painter.set_window(ids.this, Some(Arc::clone(window))))
+         {
+-            log::error!(
++            log::error!(target: "gagadown_ui",
+                 "when rendering viewport_id={:?}, set_window Error {err}",
+                 ids.this
+             );
+         }
++        log::trace!(target: "gagadown_ui", "popup_set_window_end viewport={:?} elapsed_ms={}", ids.this, set_window_started.elapsed().as_millis());
+     }
+ 
+     // See `run_ui_and_paint`: never present to a hidden window.
+     if reveal || !is_invisible_or_minimized(window) {
+     let _stage = crate::stall::Stage::enter(crate::stall::CHILD_PAINT);
++    let paint_started = Instant::now();
+     let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);
+     painter.paint_and_update_textures(
+         ids.this,
+@@ -1291,11 +1319,13 @@ fn render_immediate_viewport(
+         vec![],
+         window,
+     );
++    log::trace!(target: "gagadown_ui", "popup_paint_end viewport={:?} elapsed_ms={}", ids.this, paint_started.elapsed().as_millis());
+     }
+ 
      if reveal {
          window.set_visible(true);
      }
-+    log::trace!(target: "gagadown_ui", "popup_end window={:?} viewport={:?}", window.id(), ids.this);
++    log::trace!(target: "gagadown_ui", "popup_end window={:?} viewport={:?} elapsed_ms={}", window.id(), ids.this, popup_started.elapsed().as_millis());
  
      egui_winit.handle_platform_output(window, platform_output);
  
 diff --git a/patches/egui-wgpu/src/winit.rs b/patches/egui-wgpu/src/winit.rs
-index f9db6b5..b056f78 100644
+index f9db6b5..dbd2e18 100644
 --- a/patches/egui-wgpu/src/winit.rs
 +++ b/patches/egui-wgpu/src/winit.rs
-@@ -245,6 +245,7 @@ impl Painter {
+@@ -20,6 +20,8 @@ struct SurfaceState {
+     resizing: bool,
+     needs_reconfigure: bool,
+     needs_recreate: bool,
++    paced: bool,
++    last_present: Option<web_time::Instant>,
+ }
+ 
+ /// Everything you need to paint egui with [`wgpu`] on [`winit`].
+@@ -94,7 +96,7 @@ impl Painter {
+     }
+ 
+     fn configure_surface(
+-        surface_state: &SurfaceState,
++        surface_state: &mut SurfaceState,
+         render_state: &RenderState,
+         config: &SurfaceConfig,
+     ) {
+@@ -105,6 +107,38 @@ impl Painter {
+             desired_maximum_frame_latency,
+         } = *config;
+ 
++        // On Linux a vsync present mode (Fifo/AutoVsync) blocks `get_current_texture`/`present`
++        // forever while the window sits on an inactive workspace, freezing every other viewport
++        // on this thread too (egui#5836, wgpu#8597). Prefer a non-blocking mode and pace frames
++        // ourselves in `paint_and_update_textures`.
++        #[cfg(target_os = "linux")]
++        let present_mode = {
++            let chosen = if matches!(
++                present_mode,
++                wgpu::PresentMode::AutoVsync | wgpu::PresentMode::Fifo
++            ) {
++                let modes = surface_state
++                    .surface
++                    .get_capabilities(&render_state.adapter)
++                    .present_modes;
++                if modes.contains(&wgpu::PresentMode::Mailbox) {
++                    wgpu::PresentMode::Mailbox
++                } else if modes.contains(&wgpu::PresentMode::Immediate) {
++                    wgpu::PresentMode::Immediate
++                } else {
++                    present_mode
++                }
++            } else {
++                present_mode
++            };
++            log::debug!(target: "gagadown_ui", "gpu_present_mode requested={:?} chosen={:?}", present_mode, chosen);
++            surface_state.paced = matches!(
++                chosen,
++                wgpu::PresentMode::Mailbox | wgpu::PresentMode::Immediate
++            );
++            chosen
++        };
++
+         // Transaction presentation can hold a drawable during AppKit live resize. Keep the
+         // configured low-latency path normally, but use three Metal drawables while resizing.
+         #[cfg(all(target_os = "macos", feature = "macos-window-resize-jitter-fix"))]
+@@ -245,6 +279,7 @@ impl Painter {
              let render_state =
                  RenderState::create(&self.config, &self.instance, Some(&surface), self.options)
                      .await?;
@@ -1039,7 +1551,38 @@ index f9db6b5..b056f78 100644
              self.render_state = Some(render_state);
          }
          self.install_surface(surface, viewport_id, size.width, size.height, false);
-@@ -601,19 +602,24 @@ impl Painter {
+@@ -298,6 +333,8 @@ impl Painter {
+                 resizing,
+                 needs_reconfigure: false,
+                 needs_recreate: false,
++                paced: false,
++                last_present: None,
+             },
+         );
+         let Some(width) = NonZeroU32::new(width) else {
+@@ -598,22 +635,46 @@ impl Painter {
+             surface_state.needs_reconfigure = false;
+         }
+ 
++        // A non-blocking present mode means nothing throttles us anymore; pace each
++        // surface to its monitor's refresh rate so repaints don't spin.
++        if surface_state.paced
++            && let Some(last_present) = surface_state.last_present
++        {
++            let refresh_mhz = window
++                .current_monitor()
++                .and_then(|m| m.refresh_rate_millihertz())
++                .map_or(60_000, |mhz| mhz.clamp(30_000, 240_000));
++            let interval = std::time::Duration::from_secs_f64(1000.0 / f64::from(refresh_mhz));
++            let elapsed = last_present.elapsed();
++            if elapsed < interval {
++                let sleep = interval - elapsed;
++                std::thread::sleep(sleep);
++                vsync_sec += sleep.as_secs_f32();
++                log::trace!(target: "gagadown_ui", "gpu_pace viewport={viewport_id:?} sleep_ms={}", sleep.as_millis());
++            }
++        }
++
          let output_frame = {
              profiling::scope!("get_current_texture");
              // This is what vsync-waiting happens on my Mac.
@@ -1065,7 +1608,7 @@ index f9db6b5..b056f78 100644
                  match (*self.config.on_surface_status)(&other) {
                      SurfaceErrorAction::Reconfigure => {
                          Self::configure_surface(surface_state, render_state, &self.config.surface);
-@@ -732,11 +738,14 @@ impl Painter {
+@@ -732,11 +793,14 @@ impl Painter {
          {
              profiling::scope!("Queue::submit");
              // wgpu doesn't document where vsync can happen. Maybe here?
@@ -1081,7 +1624,7 @@ index f9db6b5..b056f78 100644
          };
  
          // Ensure that the queue guard does not do unnecessary work when dropped
-@@ -770,9 +779,12 @@ impl Painter {
+@@ -770,11 +834,16 @@ impl Painter {
          {
              profiling::scope!("present");
              // wgpu doesn't document where vsync can happen. Maybe here?
@@ -1094,4 +1637,8 @@ index f9db6b5..b056f78 100644
 +            log::trace!(target: "gagadown_ui", "gpu_present_end viewport={viewport_id:?} elapsed_ms={}", elapsed.as_millis());
          }
  
++        surface_state.last_present = Some(web_time::Instant::now());
++
          vsync_sec
+     }
+ 

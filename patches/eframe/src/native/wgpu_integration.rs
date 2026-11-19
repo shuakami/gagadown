@@ -282,7 +282,7 @@ impl<'app> WgpuWinitApp<'app> {
             let event_loop_proxy = Arc::clone(&self.repaint_proxy);
 
             egui_ctx.set_request_repaint_callback(move |info| {
-                log::trace!("request_repaint_callback: {info:?}");
+                log::trace!(target: "gagadown_ui", "request_repaint_callback: {info:?}");
                 let when = Instant::now() + info.delay;
                 let cumulative_pass_nr = info.current_cumulative_pass_nr;
 
@@ -686,7 +686,10 @@ impl WgpuWinitRunning<'_> {
 
             {
                 profiling::scope!("set_window");
+                let _stage = crate::stall::Stage::enter(crate::stall::SURFACE);
+                let set_window_started = Instant::now();
                 pollster::block_on(painter.set_window(viewport_id, Some(Arc::clone(window))))?;
+                log::trace!(target: "gagadown_ui", "set_window_end window={window_id:?} viewport={viewport_id:?} elapsed_ms={}", set_window_started.elapsed().as_millis());
             }
 
             let Some(egui_winit) = egui_winit.as_mut() else {
@@ -777,9 +780,10 @@ impl WgpuWinitRunning<'_> {
         // so make sure we hold no locks here!
         let full_output = {
             let _stage = crate::stall::Stage::enter(crate::stall::UPDATE);
+            let started = Instant::now();
             log::trace!(target: "gagadown_ui", "ui_begin window={window_id:?} viewport={viewport_id:?}");
             let output = integration.update(app.as_mut(), viewport_ui_cb.as_deref(), raw_input);
-            log::trace!(target: "gagadown_ui", "ui_end window={window_id:?} viewport={viewport_id:?}");
+            log::trace!(target: "gagadown_ui", "ui_end window={window_id:?} viewport={viewport_id:?} elapsed_ms={}", started.elapsed().as_millis());
             output
         };
 
@@ -837,6 +841,7 @@ impl WgpuWinitRunning<'_> {
                 }
             });
             let _stage = crate::stall::Stage::enter(crate::stall::ROOT_PAINT);
+            let paint_started = Instant::now();
             let vsync_secs = painter.paint_and_update_textures(
                 viewport_id,
                 pixels_per_point,
@@ -846,6 +851,7 @@ impl WgpuWinitRunning<'_> {
                 screenshot_commands,
                 window,
             );
+            log::trace!(target: "gagadown_ui", "root_paint_end window={window_id:?} viewport={viewport_id:?} elapsed_ms={}", paint_started.elapsed().as_millis());
 
             for action in viewport.actions_requested.drain(..) {
                 match action {
@@ -1178,6 +1184,7 @@ fn render_immediate_viewport(
     immediate_viewport: ImmediateViewport<'_>,
 ) {
     profiling::function_scope!();
+    let popup_started = Instant::now();
 
     let ImmediateViewport {
         ids,
@@ -1204,6 +1211,8 @@ fn render_immediate_viewport(
             painter,
         );
         if viewport.window.is_none() {
+            let create_started = Instant::now();
+            log::trace!(target: "gagadown_ui", "popup_create_begin viewport={:?}", ids.this);
             event_loop_context::with_current_event_loop(|event_loop| {
                 let _stage = crate::stall::Stage::enter(crate::stall::CHILD_CREATE);
                 // Create hidden and show after the first paint, like the root, so no blank
@@ -1214,13 +1223,14 @@ fn render_immediate_viewport(
                 viewport.builder.visible = wanted;
                 reveal = wanted != Some(false) && viewport.window.is_some();
             });
+            log::trace!(target: "gagadown_ui", "popup_create_end viewport={:?} created={} elapsed_ms={}", ids.this, viewport.window.is_some(), create_started.elapsed().as_millis());
         }
 
         let (Some(window), Some(egui_winit)) = (&viewport.window, &mut viewport.egui_winit) else {
             break 'input None;
         };
-        log::trace!(target: "gagadown_ui", "popup_begin window={:?} viewport={:?} reveal={reveal}", window.id(), ids.this);
         egui_winit::update_viewport_info(&mut viewport.info, egui_ctx, window, false);
+        log::trace!(target: "gagadown_ui", "popup_begin window={:?} viewport={:?} reveal={reveal} visible={:?} minimized={:?} occluded={:?} setup_elapsed_ms={}", window.id(), ids.this, window.is_visible(), window.is_minimized(), viewport.info.occluded, popup_started.elapsed().as_millis());
 
         let mut input = egui_winit.take_egui_input(window);
         input.viewports = viewports
@@ -1248,6 +1258,7 @@ fn render_immediate_viewport(
 
     // Run the user code, which could re-entrantly call this function again (!).
     // Make sure no locks are held during this call.
+    let ui_started = Instant::now();
     let egui::FullOutput {
         platform_output,
         textures_delta,
@@ -1257,7 +1268,7 @@ fn render_immediate_viewport(
     } = egui_ctx.run_ui(input, |ui| {
         viewport_ui_cb(ui);
     });
-    log::trace!(target: "gagadown_ui", "popup_ui_end viewport={:?}", ids.this);
+    log::trace!(target: "gagadown_ui", "popup_ui_end viewport={:?} elapsed_ms={}", ids.this, ui_started.elapsed().as_millis());
 
     // ------------------------------------------
 
@@ -1282,18 +1293,22 @@ fn render_immediate_viewport(
 
     {
         profiling::scope!("set_window");
+        let _stage = crate::stall::Stage::enter(crate::stall::SURFACE);
+        let set_window_started = Instant::now();
         if let Err(err) = pollster::block_on(painter.set_window(ids.this, Some(Arc::clone(window))))
         {
-            log::error!(
+            log::error!(target: "gagadown_ui",
                 "when rendering viewport_id={:?}, set_window Error {err}",
                 ids.this
             );
         }
+        log::trace!(target: "gagadown_ui", "popup_set_window_end viewport={:?} elapsed_ms={}", ids.this, set_window_started.elapsed().as_millis());
     }
 
     // See `run_ui_and_paint`: never present to a hidden window.
     if reveal || !is_invisible_or_minimized(window) {
     let _stage = crate::stall::Stage::enter(crate::stall::CHILD_PAINT);
+    let paint_started = Instant::now();
     let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);
     painter.paint_and_update_textures(
         ids.this,
@@ -1304,12 +1319,13 @@ fn render_immediate_viewport(
         vec![],
         window,
     );
+    log::trace!(target: "gagadown_ui", "popup_paint_end viewport={:?} elapsed_ms={}", ids.this, paint_started.elapsed().as_millis());
     }
 
     if reveal {
         window.set_visible(true);
     }
-    log::trace!(target: "gagadown_ui", "popup_end window={:?} viewport={:?}", window.id(), ids.this);
+    log::trace!(target: "gagadown_ui", "popup_end window={:?} viewport={:?} elapsed_ms={}", window.id(), ids.this, popup_started.elapsed().as_millis());
 
     egui_winit.handle_platform_output(window, platform_output);
 

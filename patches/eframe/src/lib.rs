@@ -186,6 +186,7 @@ pub mod stall {
     pub const ROOT_PAINT: u32 = 5;
     pub const CHILD_CREATE: u32 = 6;
     pub const CHILD_PAINT: u32 = 7;
+    pub const SURFACE: u32 = 8;
 
     pub fn now_ms() -> u64 {
         std::time::SystemTime::now()
@@ -203,6 +204,7 @@ pub mod stall {
             ROOT_PAINT => "主窗口绘制/呈现",
             CHILD_CREATE => "创建弹窗窗口",
             CHILD_PAINT => "弹窗绘制/呈现",
+            SURFACE => "窗口 surface 更新",
             _ => "未知",
         }
     }

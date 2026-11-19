@@ -1082,6 +1082,49 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
         clip.add(Shape::line(pts, Stroke::new(1.6, p.green)));
     }
     pt.text(r.right_top(), Align2::RIGHT_TOP, speed((max / 1.15) as f64), font(10.5), p.weak);
+
+struct UiTraceMakeWriter {
+    tx: std::sync::mpsc::SyncSender<Vec<u8>>,
+    dropped: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+struct UiTraceLine {
+    tx: std::sync::mpsc::SyncSender<Vec<u8>>,
+    dropped: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    bytes: Vec<u8>,
+}
+
+impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for UiTraceMakeWriter {
+    type Writer = UiTraceLine;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        UiTraceLine {
+            tx: self.tx.clone(),
+            dropped: self.dropped.clone(),
+            bytes: Vec::with_capacity(256),
+        }
+    }
+}
+
+impl std::io::Write for UiTraceLine {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for UiTraceLine {
+    fn drop(&mut self) {
+        if !self.bytes.is_empty()
+            && self.tx.try_send(std::mem::take(&mut self.bytes)).is_err()
+        {
+            self.dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 /// Writes `crash.log` on panic and `freeze.log` when the UI thread is stuck in one stage.
@@ -1089,18 +1132,83 @@ fn install_diagnostics(dir: std::path::PathBuf) {
     if std::env::var_os("GAGADOWN_UI_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")) {
         use tracing_subscriber::{filter::Targets, prelude::*};
 
-        let trace = tracing_subscriber::fmt::layer()
-            .with_timer(tracing_subscriber::fmt::time::uptime())
-            .with_ansi(false)
-            .with_writer(std::io::stderr);
-        let result = tracing_subscriber::registry()
-            .with(trace)
-            .with(Targets::new().with_target("gagadown_ui", tracing::Level::TRACE))
-            .try_init();
-        match result {
-            Ok(()) => tracing::info!(target: "gagadown_ui", "UI trace enabled"),
-            Err(err) => eprintln!("GaGaDown: failed to initialize UI trace: {err}"),
-        }
+        let log_path = dir.join("ui-debug.log");
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&log_path);
+        let log_file = match log_file {
+            Ok(file) => Some(file),
+            Err(err) => {
+                eprintln!("GaGaDown: cannot open UI diagnostic log {}: {err}", log_path.display());
+                // Keep the normal crash/freeze diagnostics installed below.
+                None
+            }
+        };
+
+        if let Some(log_file) = log_file {
+            // Trace events are frequent; queue them off the UI/event-loop thread so
+            // filesystem latency cannot become part of the stall being measured.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4096);
+            let dropped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let writer_dropped = dropped.clone();
+            match std::thread::Builder::new()
+                .name("ui-trace-writer".into())
+                .spawn(move || {
+                    use std::io::Write;
+                    let mut out = std::io::BufWriter::new(log_file);
+                    let mut pending = 0usize;
+                    loop {
+                        match rx.recv_timeout(Duration::from_millis(250)) {
+                            Ok(line) => {
+                                if out.write_all(&line).is_err() {
+                                    break;
+                                }
+                                pending += 1;
+                                if pending >= 64 {
+                                    if out.flush().is_err() {
+                                        break;
+                                    }
+                                    pending = 0;
+                                }
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                if pending > 0 && out.flush().is_err() {
+                                    break;
+                                }
+                                pending = 0;
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                        let count = writer_dropped.swap(0, std::sync::atomic::Ordering::Relaxed);
+                        if count > 0 {
+                            let _ = writeln!(out, "[diagnostic] dropped {count} UI trace records (writer queue full)");
+                            let _ = out.flush();
+                            pending = 0;
+                        }
+                    }
+                    let _ = out.flush();
+                })
+            {
+                Err(err) => eprintln!("GaGaDown: cannot start UI diagnostic writer: {err}"),
+                Ok(_) => {
+                    let make_writer = UiTraceMakeWriter { tx, dropped };
+                    let trace = tracing_subscriber::fmt::layer()
+                        .with_timer(tracing_subscriber::fmt::time::uptime())
+                        .with_ansi(false)
+                        .with_writer(make_writer);
+                    let result = tracing_subscriber::registry()
+                        .with(trace)
+                        .with(Targets::new().with_target("gagadown_ui", tracing::Level::TRACE))
+                        .try_init();
+                    match result {
+                        Ok(()) => tracing::info!(target: "gagadown_ui", log_path = %log_path.display(), "UI trace enabled"),
+                        Err(err) => eprintln!("GaGaDown: failed to initialize UI trace: {err}"),
+                    }
+                }
+            }
+        };
     }
 
     fn append(path: &Path, line: &str) {
@@ -3654,6 +3762,7 @@ impl App {
                 .with_decorations(false)
                 .with_resizable(false)
                 .with_always_on_top()
+                .with_app_id("dev.gagadown.GaGaDown")
                 .with_icon(self.icon.clone());
             let mut close = false;
             ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("popup", pop.key)), builder, |ui, _| {
