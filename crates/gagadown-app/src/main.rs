@@ -4192,8 +4192,12 @@ fn main() -> eframe::Result {
         centered: true,
         ..Default::default()
     };
+    // Wayland can't unmap a window, so close-to-tray (Visible(false)) only works
+    // under X11/XWayland. Default to it for tray support (DISPLAY is always set
+    // when XWayland is available); GAGADOWN_FORCE_WAYLAND opts back into the
+    // Wayland backend for debugging.
     #[cfg(target_os = "linux")]
-    if std::env::var_os("GAGADOWN_FORCE_X11").is_some() {
+    if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_none() && std::env::var_os("DISPLAY").is_some() {
         use winit::platform::x11::EventLoopBuilderExtX11;
         opts.event_loop_builder = Some(Box::new(|builder| {
             builder.with_x11();
