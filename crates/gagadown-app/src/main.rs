@@ -429,6 +429,11 @@ struct App {
     main_pos: Option<Pos2>,
     main_maximized: Option<bool>,
     update: update::State,
+    /// 关于卡片更新标签的交叉淡入淡出：当前文案、上一条文案、切换时刻、阶段 key。
+    update_label: String,
+    update_label_prev: String,
+    update_label_at: Instant,
+    update_label_key: u8,
 }
 
 /// A download popup: `task` is set once the hand-off probe accepted the link.
@@ -2203,6 +2208,10 @@ impl App {
             draft,
             draft_proxies,
             update: update::new_state(),
+            update_label: String::new(),
+            update_label_prev: String::new(),
+            update_label_at: Instant::now(),
+            update_label_key: u8::MAX,
             cache: None,
             toasts: Vec::new(),
             handoff_fails: Vec::new(),
@@ -3563,35 +3572,46 @@ impl App {
             }
             lx = lr.right() + 18.0;
         }
-        // 更新链接 + 状态：同一行续排，文案随 update::Stage 变化。
+        // 更新入口：单个标签即状态机——文案/颜色/可交互性随 stage 变化，
+        // 文案切换时 160ms 交叉淡入淡出，不再向后堆叠状态文本。
         let stage = self.update.lock().clone();
-        let ulabel = match &stage {
-            update::Stage::Installed => tr("重启"),
-            update::Stage::Found(..) if update::can_self_install() => tr("更新"),
-            update::Stage::Found(..) => tr("去下载"),
-            _ => tr("检查更新"),
+        let (ukey, ulabel, ucol, live, utip): (u8, String, Color32, bool, Option<String>) = match &stage {
+            update::Stage::Idle => (0, tr("检查更新").into(), p.accent, true, None),
+            update::Stage::Checking => (1, tr("正在检查…").into(), p.weak, false, None),
+            update::Stage::UpToDate => (2, tr("已是最新").into(), p.weak, true, None),
+            update::Stage::Found(tag, _) => (3, trf("发现新版本 {}", &[tag]), p.accent, true, None),
+            update::Stage::Downloading(pct) => (4, trf("正在下载… {}%", &[pct]), p.weak, false, None),
+            update::Stage::Installing => (5, tr("正在安装…").into(), p.weak, false, None),
+            update::Stage::Installed => (6, tr("已安装，点击重启完成更新").into(), p.accent, true, None),
+            update::Stage::Failed(e) => (7, tr("更新失败").into(), p.red, true, Some(e.clone())),
         };
-        let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, ulabel, font(12.5), p.accent, w);
-        let resp = ui.interact(lr.expand(3.0), Id::new("about_update"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-        if resp.hovered() {
-            pt.hline(lr.x_range(), lr.bottom() + 1.0, Stroke::new(1.0, p.accent.gamma_multiply(0.6)));
+        const UFADE: Duration = Duration::from_millis(160);
+        // 只在阶段变化时交叉淡入淡出；阶段内文案变化（如下载百分比）即时刷新，
+        // 否则每个百分点都会重启动画。
+        if ukey != self.update_label_key {
+            self.update_label_prev = std::mem::replace(&mut self.update_label, ulabel.clone());
+            self.update_label_at = Instant::now();
+            self.update_label_key = ukey;
         }
-        if resp.clicked() {
-            self.start_update();
+        let ft = (self.update_label_at.elapsed().as_secs_f32() / UFADE.as_secs_f32()).min(1.0);
+        if ft < 1.0 {
+            ui.ctx().request_repaint();
         }
-        lx = lr.right() + 18.0;
-        let (stext, scol) = match &stage {
-            update::Stage::Checking => (tr("正在检查…").into(), p.weak),
-            update::Stage::UpToDate => (tr("已是最新").into(), p.weak),
-            update::Stage::Found(tag, _) => (trf("发现新版本 {}", &[tag]), p.accent),
-            update::Stage::Downloading(pct) => (trf("正在下载… {}%", &[pct]), p.accent),
-            update::Stage::Installing => (tr("正在安装…").into(), p.accent),
-            update::Stage::Installed => (tr("已安装，重启完成更新").into(), p.green),
-            update::Stage::Failed(e) => (trf("更新失败：{}", &[e]), p.red),
-            update::Stage::Idle => (String::new(), p.weak),
-        };
-        if !stext.is_empty() {
-            text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, stext, font(12.0), scol, r.right() - lx - 8.0);
+        if ft < 1.0 && !self.update_label_prev.is_empty() {
+            text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, &self.update_label_prev, font(12.5), ucol.linear_multiply(1.0 - ft), w);
+        }
+        let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, &ulabel, font(12.5), ucol.linear_multiply(ft), w);
+        if live {
+            let mut resp = ui.interact(lr.expand(3.0), Id::new("about_update"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if let Some(t) = &utip {
+                resp = resp.on_hover_text(t);
+            }
+            if resp.hovered() {
+                pt.hline(lr.x_range(), lr.bottom() + 1.0, Stroke::new(1.0, p.accent.gamma_multiply(0.6)));
+            }
+            if resp.clicked() {
+                self.start_update();
+            }
         }
 
         let done = self.views.iter().filter(|v| v.status == Status::Completed);
