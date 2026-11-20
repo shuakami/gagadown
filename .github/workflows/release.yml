@@ -153,8 +153,49 @@ jobs:
           name: flatpak-sources
           path: dist/cargo-sources.json
 
+  # 自分发 Flatpak：直接构建仓库 checkout（manifest 的 dir source），
+  # 单文件 .flatpak 进 release 资产，应用内更新器按资产名 *.flatpak 找它。
+  flatpak:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      V: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set version
+        run: bash tools/set-version.sh "$V"
+
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Add Flathub remote
+        run: flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      # runtime/SDK 与构建缓存放进 cache，否则每次发版都要重拉 ~1GB。
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .flatpak-builder
+            repo
+          key: flatpak-${{ runner.os }}-${{ hashFiles('packaging/flatpak/**', 'Cargo.lock') }}
+          restore-keys: flatpak-${{ runner.os }}-
+
+      - name: Build bundle
+        run: |
+          flatpak-builder --user --install-deps-from=flathub --force-clean --disable-rofiles-fuse --repo=repo build-dir packaging/flatpak/io.github.shuakami.GaGaDown.yml
+          mkdir -p dist
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo "dist/GagaDown-$V-linux-x86_64.flatpak" io.github.shuakami.GaGaDown
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: dist/*
+
   release:
-    needs: [version, windows, linux, test, flatpak-sources]
+    needs: [version, windows, linux, test, flatpak-sources, flatpak]
     runs-on: ubuntu-latest
     env:
       V: ${{ needs.version.outputs.version }}
@@ -174,6 +215,7 @@ jobs:
           cd dist
           cp "GagaDown-Setup-$V.exe" GagaDown-windows-setup.exe
           cp "GagaDown-$V-linux-x86_64.tar.gz" GagaDown-linux-x86_64.tar.gz
+          cp "GagaDown-$V-linux-x86_64.flatpak" GagaDown-linux-x86_64.flatpak
           ls -la
 
       - name: Write release notes
@@ -200,6 +242,7 @@ jobs:
             row "GagaDown-$V-portable.exe" "Windows 便携版"
             row "gagadown-cli-$V.exe" "Windows 命令行"
             row "GagaDown-$V-linux-x86_64.tar.gz" "Linux x86_64（桌面程序 + 命令行）"
+            row "GagaDown-$V-linux-x86_64.flatpak" "Linux Flatpak 包"
             echo "</table>"
             echo "</details>"
             echo
@@ -227,7 +270,9 @@ jobs:
             dist/GagaDown-${{ env.V }}-portable.exe
             dist/gagadown-cli-${{ env.V }}.exe
             dist/GagaDown-${{ env.V }}-linux-x86_64.tar.gz
+            dist/GagaDown-${{ env.V }}-linux-x86_64.flatpak
             dist/GagaDown-${{ env.V }}-src.zip
             dist/GagaDown-windows-setup.exe
             dist/GagaDown-linux-x86_64.tar.gz
+            dist/GagaDown-linux-x86_64.flatpak
             dist/cargo-sources.json

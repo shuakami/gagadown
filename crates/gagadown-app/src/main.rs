@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 mod strings;
+mod update;
 
 use crate::strings::{tr, trf};
 
@@ -31,6 +32,45 @@ const PAGE_EXIT_END: f32 = 0.55;
 const PAGE_ENTER_START: f32 = 0.32;
 const NAV_INDICATOR_HEIGHT: f32 = 48.0;
 const NAV_INDICATOR_SECS: f32 = 0.28;
+
+/// Wayland can't unmap a mapped window or un-minimize one, so the hide/show
+/// tray commands differ from X11. Set from the chosen winit backend at startup.
+static IS_WAYLAND: AtomicBool = AtomicBool::new(false);
+
+/// The main window lives in this child viewport on Wayland: hiding it means
+/// destroying the window entirely (true hide-to-tray), and the never-mapped
+/// root viewport only hosts the event loop.
+fn main_viewport() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("gagadown-main")
+}
+
+/// Hide the main window to the tray. On Wayland the caller's `hidden` flag is
+/// enough: the next pass stops showing the child viewport and its window is
+/// destroyed. On X11 the root window is withdrawn.
+fn hide_main_window(ctx: &egui::Context) {
+    if IS_WAYLAND.load(Ordering::Relaxed) {
+        ctx.request_repaint();
+    } else {
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+    }
+}
+
+/// Bring the main window back from the tray. On Wayland the window is simply
+/// recreated by the next pass; an activation request covers the case where it
+/// still exists but is minimized (the compositor may only set a hint).
+fn show_main_window(ctx: &egui::Context) {
+    if IS_WAYLAND.load(Ordering::Relaxed) {
+        ctx.send_viewport_cmd_to(
+            main_viewport(),
+            ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical),
+        );
+    } else {
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+    }
+}
+
 #[cfg(debug_assertions)]
 const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
 #[cfg(not(debug_assertions))]
@@ -382,6 +422,17 @@ struct App {
     tray: Option<Box<dyn std::any::Any>>,
     quit: Arc<AtomicBool>,
     hidden: Arc<AtomicBool>,
+    /// Last seen geometry of the main window, restored when its Wayland child
+    /// viewport is recreated after a tray-hide cycle.
+    main_size: Option<[f32; 2]>,
+    main_pos: Option<Pos2>,
+    main_maximized: Option<bool>,
+    update: update::State,
+    /// 关于卡片更新标签的交叉淡入淡出：当前文案、上一条文案、切换时刻、阶段 key。
+    update_label: String,
+    update_label_prev: String,
+    update_label_at: Instant,
+    update_label_key: u8,
 }
 
 /// A download popup: `task` is set once the hand-off probe accepted the link.
@@ -611,16 +662,14 @@ fn route_info(v: &TaskView) -> (Option<String>, Option<u64>) {
     (v.route.clone(), v.route_latency_ms)
 }
 
-fn lang_pref_label(pref: LangPref) -> &'static str {
-    match pref {
-        LangPref::Auto => tr("跟随系统"),
-        LangPref::Zh => "简体中文",
-        LangPref::En => "English",
-    }
-}
-
 fn lang_options() -> [(LangPref, &'static str); 3] {
     [(LangPref::Auto, tr("跟随系统")), (LangPref::Zh, "简体中文"), (LangPref::En, "English")]
+}
+
+#[cfg(target_os = "linux")]
+fn backend_options() -> [(gagadown_core::config::DisplayBackend, &'static str); 2] {
+    use gagadown_core::config::DisplayBackend as B;
+    [(B::X11, "X11 (XWayland)"), (B::Wayland, "Wayland")]
 }
 
 const EXTENSION: &[(&str, &[u8])] = &[
@@ -1340,6 +1389,84 @@ fn menu_item(ui: &mut Ui, label: &str, danger: bool, p: &Pal) -> bool {
     resp.clicked()
 }
 
+/// Filled caret triangle rotated `angle` radians clockwise around `c` (egui's
+/// y-down space: positive angle = clockwise). angle=0 points down.
+fn caret_tri(pt: &Painter, c: Pos2, angle: f32, col: Color32) {
+    let (si, co) = angle.sin_cos();
+    let rp = |dx: f32, dy: f32| pos2(c.x + dx * co - dy * si, c.y + dx * si + dy * co);
+    pt.add(egui::Shape::convex_polygon(vec![rp(-5.5, -3.0), rp(5.5, -3.0), rp(0.0, 3.2)], col, Stroke::NONE));
+}
+
+/// Fused dropdown: closed it is a plain rounded button; expanded it paints the
+/// button and the item list as one continuous rounded block in the foreground
+/// layer (shared border, inner divider), and the caret flips.
+fn fused_picker<T: Copy + PartialEq>(ui: &mut Ui, r: Rect, id: Id, cur: T, options: &[(T, &'static str)], p: &Pal) -> Option<T> {
+    const ROW: f32 = 30.0;
+    const PAD: f32 = 4.0;
+    let cur_label = options.iter().find(|(v, _)| *v == cur).map(|(_, l)| *l).unwrap_or("");
+    let ctx = ui.ctx().clone();
+    let key = id.with("open");
+    let mut open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, false));
+    let resp = ui.interact(r, id, Sense::click());
+    if resp.clicked() {
+        open = !open;
+        ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = open);
+    }
+    let union = Rect::from_min_size(r.min, vec2(r.width(), r.height() + PAD + ROW * options.len() as f32 + PAD));
+    let t = ctx.animate_bool_with_time(key.with("t"), open, 0.18);
+    let rot = std::f32::consts::PI * egui::emath::easing::cubic_out(t);
+    let hover_pos = ctx.input(|i| i.pointer.hover_pos());
+    // Whole-button hover tint (no inset chip: that would be a box inside the box).
+    // Fades out while opening, since the expanded header is a title, not an option.
+    let hv = ctx.animate_bool_with_time(key.with("hv"), !open && hover_pos.is_some_and(|pos| r.contains(pos)), 0.1);
+    let tint = p.text.gamma_multiply(0.06 * hv);
+    if t <= 0.0 {
+        ui.painter().rect(r, CornerRadius::same(8), p.input, Stroke::new(1.0, p.line), StrokeKind::Inside);
+        ui.painter().rect_filled(r, CornerRadius::same(8), tint);
+    }
+    ui.painter().text(pos2(r.left() + PAD + 10.0, r.center().y), Align2::LEFT_CENTER, cur_label, font(12.5), p.text);
+    caret_tri(ui.painter(), pos2(r.right() - PAD - 17.0, r.center().y), rot, p.weak);
+    // The overlay Area is shown every frame (empty while closed) so it never
+    // "becomes visible": egui would otherwise fade it in from transparent and
+    // run an invisible sizing pass, which flashes the button on open.
+    let shown = Rect::from_min_size(union.min, vec2(union.width(), egui::lerp(r.height()..=union.height(), egui::emath::easing::cubic_out(t))));
+    let sel = egui::Area::new(id.with("menu")).order(egui::Order::Foreground).fixed_pos(union.min).fade_in(false).interactable(open).show(&ctx, |ui| {
+        if t <= 0.0 {
+            return None;
+        }
+        ui.painter().rect_filled(shown.translate(vec2(0.0, 2.0)), CornerRadius::same(8), Color32::from_black_alpha(50));
+        ui.painter().rect(shown, CornerRadius::same(8), p.input, Stroke::new(1.0, p.line), StrokeKind::Inside);
+        ui.set_clip_rect(shown);
+        let btn_r = Rect::from_min_size(union.min, vec2(union.width(), r.height()));
+        ui.painter().rect_filled(btn_r, CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, tint);
+        if ui.interact(btn_r, id.with("b2"), Sense::click()).clicked() {
+            ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = false);
+        }
+        ui.painter().text(pos2(btn_r.left() + PAD + 10.0, btn_r.center().y), Align2::LEFT_CENTER, cur_label, font(12.5), p.text);
+        caret_tri(ui.painter(), pos2(btn_r.right() - PAD - 17.0, btn_r.center().y), rot, p.weak);
+        ui.painter().hline(btn_r.left()..=btn_r.right(), btn_r.bottom(), Stroke::new(1.0, p.line));
+        let inner = Rect::from_min_max(pos2(union.left() + PAD, btn_r.bottom() + PAD), pos2(union.right() - PAD, union.bottom() - PAD));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::LEFT)));
+        child.set_clip_rect(inner.intersect(shown));
+        child.spacing_mut().item_spacing.y = 1.0;
+        let mut pick = None;
+        for &(v, label) in options {
+            if menu_choice(&mut child, label, cur == v, p) {
+                pick = Some(v);
+            }
+        }
+        pick
+    }).inner;
+    let mut pick = None;
+    if open {
+        pick = sel;
+        if pick.is_some() || (ctx.input(|i| i.pointer.any_click()) && ctx.input(|i| i.pointer.interact_pos()).is_some_and(|pos| !union.contains(pos))) {
+            ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = false);
+        }
+    }
+    pick
+}
+
 /// Dropdown entry styled like `menu_item`, with a check on the selected one.
 fn menu_choice(ui: &mut Ui, label: &str, selected: bool, p: &Pal) -> bool {
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
@@ -1483,9 +1610,7 @@ mod win {
             let ctx = ctx.clone();
             move || {
                 hidden.store(false, Ordering::SeqCst);
-                ctx.send_viewport_cmd(V::Visible(true));
-                ctx.send_viewport_cmd(V::Minimized(false));
-                ctx.send_viewport_cmd(V::Focus);
+                crate::show_main_window(&ctx);
                 ctx.request_repaint();
             }
         };
@@ -1905,11 +2030,8 @@ struct GaGaTray {
 #[cfg(target_os = "linux")]
 impl GaGaTray {
     fn show_window(&self) {
-        use eframe::egui::ViewportCommand as V;
         self.hidden.store(false, std::sync::atomic::Ordering::SeqCst);
-        self.ctx.send_viewport_cmd(V::Visible(true));
-        self.ctx.send_viewport_cmd(V::Minimized(false));
-        self.ctx.send_viewport_cmd(V::Focus);
+        crate::show_main_window(&self.ctx);
         self.ctx.request_repaint();
     }
 }
@@ -2084,6 +2206,11 @@ impl App {
             remove_mode: RemoveMode::TrashFiles,
             draft,
             draft_proxies,
+            update: update::new_state(),
+            update_label: String::new(),
+            update_label_prev: String::new(),
+            update_label_at: Instant::now(),
+            update_label_key: u8::MAX,
             cache: None,
             toasts: Vec::new(),
             handoff_fails: Vec::new(),
@@ -2102,6 +2229,9 @@ impl App {
             tray: None,
             quit: Arc::new(AtomicBool::new(false)),
             hidden: Arc::new(AtomicBool::new(false)),
+            main_size: None,
+            main_pos: None,
+            main_maximized: None,
         }
     }
 
@@ -2383,7 +2513,7 @@ impl App {
         if chrome_btn(ui, close, Glyph::Close, p) {
             if self.tray.is_some() {
                 self.hidden.store(true, Ordering::SeqCst);
-                ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+                hide_main_window(&ctx);
             } else {
                 ctx.send_viewport_cmd(ViewportCommand::Close);
             }
@@ -2675,18 +2805,9 @@ impl App {
         );
 
         let lr = Rect::from_min_size(pos2(bounds.right() - 156.0, bounds.top() + 16.0), vec2(140.0, 30.0));
-        let cur = self.draft.language;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(lr), |ui| {
-            egui::ComboBox::from_id_salt("welcome_lang").width(lr.width()).selected_text(lang_pref_label(cur)).show_ui(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                for (pref, label) in lang_options() {
-                    if menu_choice(ui, label, cur == pref, p) {
-                        self.set_language(pref);
-                        ui.close();
-                    }
-                }
-            });
-        });
+        if let Some(pref) = fused_picker(ui, lr, Id::new("welcome_lang"), self.draft.language, &lang_options(), p) {
+            self.set_language(pref);
+        }
     }
 
     /// 欢迎页语言切换：直接写设置并即时生效（不走设置页 600ms 防抖）。
@@ -2700,6 +2821,54 @@ impl App {
         }
         self.draft.language = pref;
         lang::set_pref(pref);
+    }
+
+    /// Linux 显示后端在窗口创建时就确定了，改设置 = 存盘后拉起新进程再退出本进程。
+    /// 新进程用 `--restart-after <pid>` 等本进程退出（单实例锁随之释放）。
+    #[cfg(target_os = "linux")]
+    fn apply_backend_restart(&mut self) {
+        if self.draft.display_backend == self.engine.settings().display_backend {
+            return;
+        }
+        let mut cand = self.draft.clone();
+        cand.proxy.proxies = self.draft_proxies.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        if let Err(e) = self.engine.set_settings(cand) {
+            self.toast(format!("{e}"), true);
+            self.draft = self.engine.settings();
+            return;
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = std::process::Command::new(exe)
+                .arg("--restart-after")
+                .arg(std::process::id().to_string())
+                .spawn();
+        }
+        std::process::exit(0);
+    }
+
+    /// 更新器入口，按 update::Stage 推进：未在跑 → 检查；Found → 自装（不支持
+    /// 的环境打开发布页）；Installed → 重启进新版。
+    fn start_update(&mut self) {
+        let stage = self.update.lock().clone();
+        match stage {
+            update::Stage::Idle | update::Stage::UpToDate | update::Stage::Failed(_) => {
+                let st = self.update.clone();
+                self.rt.spawn(async move { update::check(&st).await });
+            }
+            update::Stage::Found(tag, url) => {
+                if update::can_self_install() {
+                    let st = self.update.clone();
+                    let dir = self.engine.data_dir().to_path_buf();
+                    self.rt.spawn(async move { update::apply(&st, tag, url, dir).await });
+                } else {
+                    open_path(Path::new(&url));
+                    *self.update.lock() = update::Stage::Idle;
+                }
+            }
+            #[cfg(target_os = "linux")]
+            update::Stage::Installed => update::restart(),
+            _ => {}
+        }
     }
 
     fn section(&mut self, ui: &mut Ui, sec: Sec, items: &[TaskView], p: &Pal) {
@@ -3402,6 +3571,47 @@ impl App {
             }
             lx = lr.right() + 18.0;
         }
+        // 更新入口：单个标签即状态机——文案/颜色/可交互性随 stage 变化，
+        // 文案切换时 160ms 交叉淡入淡出，不再向后堆叠状态文本。
+        let stage = self.update.lock().clone();
+        let (ukey, ulabel, ucol, live, utip): (u8, String, Color32, bool, Option<String>) = match &stage {
+            update::Stage::Idle => (0, tr("检查更新").into(), p.accent, true, None),
+            update::Stage::Checking => (1, tr("正在检查…").into(), p.weak, false, None),
+            update::Stage::UpToDate => (2, tr("已是最新").into(), p.weak, true, None),
+            update::Stage::Found(tag, _) => (3, trf("发现新版本 {}", &[tag]), p.accent, true, None),
+            update::Stage::Downloading(pct) => (4, trf("正在下载… {}%", &[pct]), p.weak, false, None),
+            update::Stage::Installing => (5, tr("正在安装…").into(), p.weak, false, None),
+            update::Stage::Installed => (6, tr("已安装，点击重启完成更新").into(), p.accent, true, None),
+            update::Stage::Failed(e) => (7, tr("更新失败").into(), p.red, true, Some(e.clone())),
+        };
+        const UFADE: Duration = Duration::from_millis(90);
+        // 直接换字、新文案从微暗状态提亮落位：画面不会变暗（不闪），
+        // 也没有双字重叠（不糊）。只在阶段变化时触发；阶段内文案变化
+        // （如下载百分比）即时刷新，否则每个百分点都会重启动画。
+        if ukey != self.update_label_key {
+            self.update_label_prev = std::mem::replace(&mut self.update_label, ulabel.clone());
+            self.update_label_at = Instant::now();
+            self.update_label_key = ukey;
+        }
+        let ft = self.update_label_at.elapsed().as_secs_f32() / UFADE.as_secs_f32();
+        if ft < 1.0 {
+            ui.ctx().request_repaint();
+        }
+        let ualpha = if ft >= 1.0 { 1.0 } else { 1.0 - 0.35 * (1.0 - ft) * (1.0 - ft) };
+        let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, &ulabel, font(12.5), ucol.linear_multiply(ualpha), w);
+        if live {
+            let mut resp = ui.interact(lr.expand(3.0), Id::new("about_update"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if let Some(t) = &utip {
+                resp = resp.on_hover_text(t);
+            }
+            if resp.hovered() {
+                pt.hline(lr.x_range(), lr.bottom() + 1.0, Stroke::new(1.0, p.accent.gamma_multiply(0.6)));
+            }
+            if resp.clicked() {
+                self.start_update();
+            }
+        }
+
         let done = self.views.iter().filter(|v| v.status == Status::Completed);
         let (n, total) = done.fold((0usize, 0u64), |(n, t), v| (n + 1, t + v.size.unwrap_or(0)));
         pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, trf("已完成 {} 个下载，共 {}", &[&n, &bytes(total)]), font(12.0), p.weak);
@@ -3425,16 +3635,18 @@ impl App {
                             ui.add_enabled_ui(d.launch_at_login, |ui| toggle(ui, &mut d.start_minimized, p));
                         });
                         srow(ui, p, first, tr("语言"), tr("界面语言；跟随系统按系统语言显示"), 52.0, |ui| {
-                            egui::ComboBox::from_id_salt("lang").width(160.0).selected_text(lang_pref_label(d.language)).show_ui(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for (pref, label) in lang_options() {
-                                    if menu_choice(ui, label, d.language == pref, p) {
-                                        d.language = pref;
-                                        lang::set_pref(pref);
-                                        ui.close();
-                                    }
-                                }
-                            });
+                            let (r, _) = ui.allocate_exact_size(vec2(160.0, 30.0), Sense::hover());
+                            if let Some(pref) = fused_picker(ui, r, Id::new("lang"), d.language, &lang_options(), p) {
+                                d.language = pref;
+                                lang::set_pref(pref);
+                            }
+                        });
+                        #[cfg(target_os = "linux")]
+                        srow(ui, p, first, tr("显示后端"), tr("Linux 使用的显示服务器，更改后自动重启生效"), 56.0, |ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(160.0, 30.0), Sense::hover());
+                            if let Some(b) = fused_picker(ui, r, Id::new("backend"), d.display_backend, &backend_options(), p) {
+                                d.display_backend = b;
+                            }
                         });
                     });
                     group(ui, p, tr("下载"), |ui, first| {
@@ -3568,6 +3780,8 @@ impl App {
                 self.draft_proxies = self.draft.proxy.proxies.join("\n");
             }
         }
+        #[cfg(target_os = "linux")]
+        self.apply_backend_restart();
         ctx.request_repaint_after(Duration::from_millis(200));
     }
 
@@ -3906,9 +4120,7 @@ impl App {
     fn show_in_main(&mut self, ctx: &egui::Context, id: Uuid) {
         self.selected = Some(id);
         self.hidden.store(false, Ordering::SeqCst);
-        for c in [ViewportCommand::Visible(true), ViewportCommand::Minimized(false), ViewportCommand::Focus] {
-            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, c);
-        }
+        show_main_window(ctx);
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
@@ -4080,15 +4292,76 @@ impl eframe::App for App {
                 apply_style(&ctx, a);
             }
         }
-        if self.tray.is_some() && !self.quit.load(Ordering::SeqCst) && ctx.input(|i| i.viewport().close_requested()) {
-            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
-            self.hidden.store(true, Ordering::SeqCst);
-        }
         self.refresh();
         #[cfg(windows)]
         win::DARK_TEXT.store(ui.visuals().dark_mode, std::sync::atomic::Ordering::Relaxed);
         let p = Pal::new(ui.visuals().dark_mode, self.accent);
+        if self.engine.take_show_request() {
+            self.hidden.store(false, Ordering::SeqCst);
+            show_main_window(&ctx);
+        }
+        self.popups(&ctx, &p);
+        #[cfg(target_os = "linux")]
+        if IS_WAYLAND.load(Ordering::Relaxed) {
+            self.ui_wayland(ui);
+        } else {
+            self.ui_main(ui);
+        }
+        #[cfg(not(target_os = "linux"))]
+        self.ui_main(ui);
+        let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued)) || self.engine.is_detecting();
+        ctx.request_repaint_after(Duration::from_millis(if busy { 250 } else { 1000 }));
+    }
+
+    fn on_exit(&mut self) {
+        let e = self.engine.clone();
+        self.rt.block_on(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(3), e.shutdown()).await;
+        });
+    }
+}
+
+impl App {
+    /// Root pass on Wayland: the root window is never mapped (it only hosts the
+    /// event loop), so the main window lives in an immediate child viewport.
+    /// That viewport can be destroyed for a real hide-to-tray and recreated on
+    /// demand - the only way to fully unmap a window under Wayland.
+    #[cfg(target_os = "linux")]
+    fn ui_wayland(&mut self, ui: &mut Ui) {
+        if self.hidden.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut builder = egui::ViewportBuilder::default()
+            .with_title("GaGaDown")
+            .with_app_id("io.github.shuakami.GaGaDown")
+            .with_inner_size(self.main_size.unwrap_or([1120.0, 720.0]))
+            .with_min_inner_size([760.0, 480.0])
+            .with_decorations(false)
+            .with_icon(self.icon.clone());
+        if let Some(pos) = self.main_pos {
+            builder = builder.with_position(pos);
+        }
+        if self.main_maximized == Some(true) {
+            builder = builder.with_maximized(true);
+        }
+        ui.ctx().show_viewport_immediate(main_viewport(), builder, |ui2, _| self.ui_main(ui2));
+    }
+
+    /// The main window's contents. On X11/Windows this is the root viewport's
+    /// pass; on Wayland it runs inside the child viewport from `ui_wayland`.
+    fn ui_main(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let p = Pal::new(ui.visuals().dark_mode, self.accent);
+        if self.tray.is_some() && !self.quit.load(Ordering::SeqCst) && ctx.input(|i| i.viewport().close_requested()) {
+            // On Wayland the close is let through: the child viewport being
+            // destroyed is what fully unmaps the window, and `hidden` keeps it
+            // from being recreated.
+            if !IS_WAYLAND.load(Ordering::Relaxed) {
+                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                hide_main_window(&ctx);
+            }
+            self.hidden.store(true, Ordering::SeqCst);
+        }
         let full = ui.max_rect();
 
         if !ctx.egui_wants_keyboard_input() {
@@ -4156,23 +4429,25 @@ impl eframe::App for App {
         self.remove_modal(&ctx, &p);
         self.error_modal(&ctx, &p);
         self.show_toasts(&ctx, &p);
-        if self.engine.take_show_request() {
-            self.hidden.store(false, Ordering::SeqCst);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
-        self.popups(&ctx, &p);
         resize_edges(&ctx, full);
-        let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued)) || self.engine.is_detecting();
-        ctx.request_repaint_after(Duration::from_millis(if busy { 250 } else { 1000 }));
+        #[cfg(target_os = "linux")]
+        self.track_main_geometry(&ctx);
     }
 
-    fn on_exit(&mut self) {
-        let e = self.engine.clone();
-        self.rt.block_on(async move {
-            let _ = tokio::time::timeout(Duration::from_secs(3), e.shutdown()).await;
+    /// Remember the main window's geometry so the next recreation on Wayland
+    /// (where tray-hide destroys the viewport) can restore it.
+    #[cfg(target_os = "linux")]
+    fn track_main_geometry(&mut self, ctx: &egui::Context) {
+        if !IS_WAYLAND.load(Ordering::Relaxed) {
+            return;
+        }
+        let (inner, outer, maximized) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.inner_rect, v.outer_rect, v.maximized)
         });
+        self.main_size = inner.map(|r| [r.width(), r.height()]);
+        self.main_pos = outer.map(|r| r.min);
+        self.main_maximized = maximized;
     }
 }
 
@@ -4209,6 +4484,24 @@ fn main() -> eframe::Result {
     // UI-thread calls into the engine may spawn tokio tasks.
     let rt_handle = rt.handle().clone();
     let _rt_guard = rt_handle.enter();
+    // `--restart-after <pid>`: the settings page spawns a replacement process
+    // after a backend change; wait for the old process to exit so the
+    // single-instance lock and display connection are released first.
+    #[cfg(target_os = "linux")]
+    {
+        let mut args = std::env::args();
+        while let Some(a) = args.next() {
+            if a == "--restart-after" {
+                if let Some(pid) = args.next().and_then(|v| v.parse::<u32>().ok()) {
+                    let proc = format!("/proc/{pid}");
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    while std::path::Path::new(&proc).exists() && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                }
+            }
+        }
+    }
     let engine = {
         let _g = rt.enter();
         Engine::new(None)
@@ -4248,6 +4541,7 @@ fn main() -> eframe::Result {
     }
     let icon = Arc::new(egui::IconData { rgba: ICON.to_vec(), width: 256, height: 256 });
     let accent = win::accent().unwrap_or(DEFAULT_ACCENT);
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("GaGaDown")
@@ -4259,16 +4553,40 @@ fn main() -> eframe::Result {
         centered: true,
         ..Default::default()
     };
-    // Wayland can't unmap a window, so close-to-tray (Visible(false)) only works
-    // under X11/XWayland. Default to it for tray support (DISPLAY is always set
-    // when XWayland is available); GAGADOWN_FORCE_WAYLAND opts back into the
-    // Wayland backend for debugging.
+    // On Linux the display backend comes from the user's setting (`Auto` follows
+    // the session type); GAGADOWN_FORCE_X11 / GAGADOWN_FORCE_WAYLAND override it
+    // for debugging. On Wayland a mapped window cannot be unmapped, so the root
+    // window stays hidden (KEEP_ROOT_HIDDEN) and the main window is a child
+    // viewport that hide-to-tray destroys and recreates.
     #[cfg(target_os = "linux")]
-    if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_none() && std::env::var_os("DISPLAY").is_some() {
-        use winit::platform::x11::EventLoopBuilderExtX11;
-        opts.event_loop_builder = Some(Box::new(|builder| {
-            builder.with_x11();
-        }));
+    {
+        use gagadown_core::config::DisplayBackend as Backend;
+        let backend = if std::env::var_os("GAGADOWN_FORCE_X11").is_some() {
+            Backend::X11
+        } else if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_some() {
+            Backend::Wayland
+        } else {
+            st.display_backend
+        };
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+            && matches!(backend, Backend::Wayland | Backend::Auto);
+        IS_WAYLAND.store(wayland, Ordering::Relaxed);
+        eframe::KEEP_ROOT_HIDDEN.store(wayland, Ordering::Relaxed);
+        match backend {
+            Backend::Wayland if wayland => {
+                use winit::platform::wayland::EventLoopBuilderExtWayland;
+                opts.event_loop_builder = Some(Box::new(|builder| {
+                    builder.with_wayland();
+                }));
+            }
+            Backend::X11 => {
+                use winit::platform::x11::EventLoopBuilderExtX11;
+                opts.event_loop_builder = Some(Box::new(|builder| {
+                    builder.with_x11();
+                }));
+            }
+            _ => {}
+        }
     }
     #[cfg(windows)]
     eframe::epaint::text::set_glyph_rasterizer(win::gdi_glyph);
@@ -4280,6 +4598,7 @@ fn main() -> eframe::Result {
             apply_style(&cc.egui_ctx, accent);
             let mut app = App::new(rt, engine.clone(), api_error, icon, accent);
             app.tray = win::tray(cc.egui_ctx.clone(), tray_rgba(), app.quit.clone(), app.hidden.clone());
+            // On Wayland a silent start simply never creates the main viewport.
             app.hidden.store(silent, Ordering::SeqCst);
             let _ = unpack_extension(engine.data_dir());
             // Keep the UI pass running while minimized or in the tray so hand-off popups still open.

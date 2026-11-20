@@ -91,6 +91,22 @@ pub struct Settings {
     pub start_minimized: bool,
     /// UI language; `Auto` follows the system locale.
     pub language: crate::lang::LangPref,
+    /// Linux display backend; `Auto` follows the session type.
+    pub display_backend: DisplayBackend,
+}
+
+/// Which display backend winit connects to on Linux.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayBackend {
+    /// Wayland on Wayland sessions, X11 elsewhere. Not offered in the UI;
+    /// still honored if present in a hand-edited settings.json.
+    Auto,
+    Wayland,
+    /// X11/XWayland — the default; renders sharply under fractional scaling
+    /// and keeps the familiar withdraw-to-tray window behavior.
+    #[default]
+    X11,
 }
 
 pub const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
@@ -121,6 +137,7 @@ impl Default for Settings {
             launch_at_login: false,
             start_minimized: false,
             language: crate::lang::LangPref::Auto,
+            display_backend: DisplayBackend::X11,
         }
     }
 }
