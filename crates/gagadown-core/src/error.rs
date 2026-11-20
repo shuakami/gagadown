@@ -1,3 +1,4 @@
+use crate::lang::{tr, trf};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -44,21 +45,21 @@ impl ErrorKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            ErrorKind::Network => "网络连接失败",
-            ErrorKind::Timeout => "连接超时",
-            ErrorKind::Tls => "TLS 握手失败",
-            ErrorKind::ServerBusy => "服务器限流",
-            ErrorKind::ServerError => "服务器错误",
-            ErrorKind::Auth => "认证失败或链接已过期",
-            ErrorKind::NotFound => "文件不存在",
-            ErrorKind::RangeUnsupported => "服务器不支持分段",
-            ErrorKind::ResourceChanged => "远端文件已变化",
-            ErrorKind::DiskFull => "磁盘空间不足",
-            ErrorKind::Io => "文件读写错误",
-            ErrorKind::Cancelled => "已取消",
-            ErrorKind::NotDownload => "不是下载链接",
-            ErrorKind::AlreadyRunning => "GaGaDown 已在运行",
-            ErrorKind::Other => "未知错误",
+            ErrorKind::Network => tr("网络连接失败"),
+            ErrorKind::Timeout => tr("连接超时"),
+            ErrorKind::Tls => tr("TLS 握手失败"),
+            ErrorKind::ServerBusy => tr("服务器限流"),
+            ErrorKind::ServerError => tr("服务器错误"),
+            ErrorKind::Auth => tr("认证失败或链接已过期"),
+            ErrorKind::NotFound => tr("文件不存在"),
+            ErrorKind::RangeUnsupported => tr("服务器不支持分段"),
+            ErrorKind::ResourceChanged => tr("远端文件已变化"),
+            ErrorKind::DiskFull => tr("磁盘空间不足"),
+            ErrorKind::Io => tr("文件读写错误"),
+            ErrorKind::Cancelled => tr("已取消"),
+            ErrorKind::NotDownload => tr("不是下载链接"),
+            ErrorKind::AlreadyRunning => tr("GaGaDown 已在运行"),
+            ErrorKind::Other => tr("未知错误"),
         }
     }
 }
@@ -89,19 +90,19 @@ pub fn brief(message: &str) -> Option<&'static str> {
     ]
     .iter()
     .find(|(k, _)| m.contains(k))
-    .map(|x| x.1)
+    .map(|x| tr(x.1))
 }
 
 /// One-line reason for lists and notifications, e.g. `服务器错误（HTTP 502）`.
 pub fn summary(kind: ErrorKind, status: Option<u16>, message: &str) -> String {
     if let Some(s) = status {
-        return format!("{}（HTTP {s}）", kind.label());
+        return trf("{0}（HTTP {1}）", &[&kind.label(), &s]);
     }
     if kind == ErrorKind::Other && !message.is_empty() {
         return message.to_string();
     }
     match brief(message) {
-        Some(b) if b != kind.label() => format!("{}（{b}）", kind.label()),
+        Some(b) if b != kind.label() => trf("{0}（{1}）", &[&kind.label(), &b]),
         _ => kind.label().to_string(),
     }
 }

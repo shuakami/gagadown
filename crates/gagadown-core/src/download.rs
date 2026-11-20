@@ -3,6 +3,7 @@
 //! mid-flight route failover, finalisation.
 use crate::engine::{Inner, TaskEntry};
 use crate::error::{DlError, DlResult, ErrorKind};
+use crate::lang::{tr, trf};
 use crate::probe::{parse_content_range, retry_after, sanitize_filename};
 use crate::route::Route;
 use crate::segments::Table;
@@ -223,7 +224,7 @@ pub async fn run(inner: Arc<Inner>, entry: Arc<TaskEntry>, sh: Arc<Shared>) -> D
     loop {
         match run_once(&inner, &entry, &sh, force_single).await {
             Err(e) if e.kind == ErrorKind::RangeUnsupported && !force_single && !sh.cancel.is_cancelled() => {
-                entry.log("服务器分段异常，切换单线程");
+                entry.log(tr("服务器分段异常，切换单线程"));
                 force_single = true;
                 *sh.fatal.lock() = None;
                 entry.with(|r| {
@@ -232,7 +233,7 @@ pub async fn run(inner: Arc<Inner>, entry: Arc<TaskEntry>, sh: Arc<Shared>) -> D
                 });
             }
             Err(e) if e.kind == ErrorKind::ResourceChanged && !sh.cancel.is_cancelled() && sh.retries.fetch_add(1, Ordering::Relaxed) < 2 => {
-                entry.log("远端文件已变化，重新下载");
+                entry.log(tr("远端文件已变化，重新下载"));
                 *sh.fatal.lock() = None;
                 entry.with(|r| {
                     r.remaining = None;
@@ -257,9 +258,10 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
         _ = sh.cancel.cancelled() => return Err(DlError::cancelled()),
     };
     *sh.route.write() = Some(route.clone());
-    entry.log(format!("线路 {}，响应 {} ms", route.name, info.latency_ms));
+    entry.with(|r| r.route_latency_ms = Some(info.latency_ms));
+    entry.log(trf("线路 {0}，响应 {1} ms", &[&route.name, &info.latency_ms]));
     if rec.size.is_none() && is_web_page(&info) {
-        return Err(DlError { status: Some(info.status), ..DlError::new(ErrorKind::NotDownload, "服务器返回的是网页，不是文件") });
+        return Err(DlError { status: Some(info.status), ..DlError::new(ErrorKind::NotDownload, tr("服务器返回的是网页，不是文件")) });
     }
 
     let ranges = info.ranges && !force_single && info.size.unwrap_or(0) > 0;
@@ -305,7 +307,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
         (path, part)
     };
     if changed {
-        entry.log("远端文件已变化，从头下载");
+        entry.log(tr("远端文件已变化，从头下载"));
     }
     if let Some(dir) = final_path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -320,7 +322,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
     if let Some(dir) = final_path.parent() {
         if let Ok(avail) = fs4::available_space(dir) {
             if avail < need + 16 * 1024 * 1024 {
-                return Err(DlError::new(ErrorKind::DiskFull, format!("需要 {} MB，可用 {} MB", need >> 20, avail >> 20)));
+                return Err(DlError::new(ErrorKind::DiskFull, trf("需要 {0} MB，可用 {1} MB", &[&(need >> 20), &(avail >> 20)])));
             }
         }
     }
@@ -352,7 +354,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
     .await
     .map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))??;
     if sh.cancel.is_cancelled() {
-        return Err(DlError::new(ErrorKind::Cancelled, "下载已停止"));
+        return Err(DlError::new(ErrorKind::Cancelled, tr("下载已停止")));
     }
     let file = Arc::new(file);
     let validator = info.etag.clone().or(info.last_modified.clone());
@@ -449,11 +451,11 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
         let p = final_path.clone();
         let got = tokio::task::spawn_blocking(move || sha256_file(&p)).await.map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))??;
         if !got.eq_ignore_ascii_case(expect.trim()) {
-            entry.log(format!("SHA-256 不一致: {got}"));
+            entry.log(trf("SHA-256 不一致: {0}", &[&got]));
             let _ = std::fs::remove_file(&final_path);
-            return Err(DlError::new(ErrorKind::ResourceChanged, "校验失败"));
+            return Err(DlError::new(ErrorKind::ResourceChanged, tr("校验失败")));
         }
-        entry.log("SHA-256 校验通过");
+        entry.log(tr("SHA-256 校验通过"));
     }
     Ok(Outcome { final_path, size })
 }
@@ -662,7 +664,7 @@ async fn segmented(ctx: Arc<Ctx>, cap: usize, host: String) -> DlResult<()> {
     }
     let complete = sh.table.lock().as_ref().map(|t| t.complete()).unwrap_or(false);
     if !complete {
-        return Err(DlError::new(ErrorKind::Network, "部分分段未完成"));
+        return Err(DlError::new(ErrorKind::Network, tr("部分分段未完成")));
     }
     Ok(())
 }
@@ -699,7 +701,7 @@ async fn failover(ctx: &Ctx) {
     let url = ctx.urls[0].clone();
     if let Ok((r, _)) = ctx.inner.routes.resolve(&ctx.spec, &url, &ctx.ua, Some(&cur)).await {
         if r.name != cur {
-            ctx.log(format!("线路切换 {cur} -> {}", r.name));
+            ctx.log(trf("线路切换 {0} -> {1}", &[&cur, &r.name]));
             ctx.entry.with(|rec| rec.route = Some(r.name.clone()));
             *ctx.sh.route.write() = Some(r);
             ctx.sh.route_errors.store(0, Ordering::Relaxed);
@@ -765,7 +767,7 @@ async fn worker(ctx: Arc<Ctx>, wid: u32) -> bool {
                     }
                     return false;
                 }
-                ctx.log(format!("连接 #{wid} {}，第 {attempt} 次重试", e.kind.label()));
+                ctx.log(trf("连接 #{0} {1}，第 {2} 次重试", &[&wid, &e.kind.label(), &attempt]));
                 tokio::select! {
                     _ = tokio::time::sleep(backoff(attempt, e.retry_after)) => {}
                     _ = sh.cancel.cancelled() => return false,
@@ -818,7 +820,7 @@ async fn segment(ctx: &Ctx, idx: usize, wid: u32, buf: &mut Vec<u8>) -> DlResult
     let resp = tokio::select! {
         r = tokio::time::timeout(Duration::from_secs(25), req.send()) => match r {
             Ok(r) => r?,
-            Err(_) => return Err(DlError::new(ErrorKind::Timeout, "等待响应超时")),
+            Err(_) => return Err(DlError::new(ErrorKind::Timeout, tr("等待响应超时"))),
         },
         _ = sh.cancel.cancelled() => return Err(DlError::cancelled()),
     };
@@ -828,15 +830,15 @@ async fn segment(ctx: &Ctx, idx: usize, wid: u32, buf: &mut Vec<u8>) -> DlResult
             let cr = resp.headers().get(reqwest::header::CONTENT_RANGE).and_then(|v| v.to_str().ok()).and_then(parse_content_range);
             if let Some((a, _, _)) = cr {
                 if a != start {
-                    return Err(DlError::new(ErrorKind::RangeUnsupported, format!("Content-Range 起点 {a} != {start}")));
+                    return Err(DlError::new(ErrorKind::RangeUnsupported, trf("Content-Range 起点 {0} != {1}", &[&a, &start])));
                 }
             }
         }
         200 => {
             return Err(if ctx.validator.is_some() {
-                DlError::new(ErrorKind::ResourceChanged, "If-Range 未命中")
+                DlError::new(ErrorKind::ResourceChanged, tr("If-Range 未命中"))
             } else {
-                DlError::new(ErrorKind::RangeUnsupported, "服务器忽略 Range")
+                DlError::new(ErrorKind::RangeUnsupported, tr("服务器忽略 Range"))
             });
         }
         s => return Err(DlError::from_status(s, retry_after(resp.headers()))),
@@ -865,14 +867,14 @@ async fn segment(ctx: &Ctx, idx: usize, wid: u32, buf: &mut Vec<u8>) -> DlResult
                 }
                 if idle >= STALL_TIMEOUT {
                     flush(ctx, idx, buf, &mut off).await?;
-                    return Err(DlError::new(ErrorKind::Timeout, "读取超时"));
+                    return Err(DlError::new(ErrorKind::Timeout, tr("读取超时")));
                 }
                 continue;
             }
             Ok(None) => {
                 flush(ctx, idx, buf, &mut off).await?;
                 let complete = sh.table.lock().as_ref().map(|t| t.segs[idx].finished()).unwrap_or(false);
-                return if complete || (req_end < end && off >= req_end) { Ok(()) } else { Err(DlError::new(ErrorKind::Network, "连接提前关闭")) };
+                return if complete || (req_end < end && off >= req_end) { Ok(()) } else { Err(DlError::new(ErrorKind::Network, tr("连接提前关闭"))) };
             }
             Ok(Some(Err(e))) => {
                 flush(ctx, idx, buf, &mut off).await?;
@@ -948,7 +950,7 @@ async fn single_stream(ctx: Arc<Ctx>, size: Option<u64>) -> DlResult<u64> {
                 && st == 206
                 && resp.headers().get(reqwest::header::CONTENT_RANGE).and_then(|v| v.to_str().ok()).and_then(parse_content_range).is_some_and(|(a, _, _)| a == have);
             if have > 0 {
-                ctx.log(if resumed { format!("从 {:.1} MB 处续传", have as f64 / 1048576.0) } else { "服务器不支持续传，从头下载".into() });
+                ctx.log(if resumed { trf("从 {0} MB 处续传", &[&format!("{:.1}", have as f64 / 1048576.0)]) } else { tr("服务器不支持续传，从头下载").into() });
             }
             if !resumed {
                 have = 0;
@@ -969,7 +971,7 @@ async fn single_stream(ctx: Arc<Ctx>, size: Option<u64>) -> DlResult<u64> {
                     _ = sh.cancel.cancelled() => break Err(DlError::cancelled()),
                 };
                 let chunk = match next {
-                    Err(_) => break Err(DlError::new(ErrorKind::Timeout, "读取超时")),
+                    Err(_) => break Err(DlError::new(ErrorKind::Timeout, tr("读取超时"))),
                     Ok(None) => break Ok(()),
                     Ok(Some(Err(e))) => break Err(DlError::from_reqwest(&e)),
                     Ok(Some(Ok(b))) => b,
@@ -986,7 +988,7 @@ async fn single_stream(ctx: Arc<Ctx>, size: Option<u64>) -> DlResult<u64> {
             let off = have;
             if let Some(s) = size {
                 if off != s {
-                    return Err(DlError::new(ErrorKind::Network, format!("长度不符 {off}/{s}")));
+                    return Err(DlError::new(ErrorKind::Network, trf("长度不符 {0}/{1}", &[&off, &s])));
                 }
             }
             if let Some(t) = sh.table.lock().as_mut() {
@@ -1009,7 +1011,7 @@ async fn single_stream(ctx: Arc<Ctx>, size: Option<u64>) -> DlResult<u64> {
                 if e.kind.route_related() && attempt % 2 == 0 {
                     failover(&ctx).await;
                 }
-                ctx.log(format!("{}，第 {attempt} 次重试", e.kind.label()));
+                ctx.log(trf("{0}，第 {1} 次重试", &[&e.kind.label(), &attempt]));
                 tokio::select! {
                     _ = tokio::time::sleep(backoff(attempt, e.retry_after)) => {}
                     _ = sh.cancel.cancelled() => return Err(DlError::cancelled()),

@@ -1,3 +1,4 @@
+use crate::lang::tr;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -21,10 +22,10 @@ impl ProxyMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            ProxyMode::DirectThenProxy => "默认直连，失败自动走代理",
-            ProxyMode::DirectOnly => "仅直连",
-            ProxyMode::ProxyThenDirect => "优先代理，失败回退直连",
-            ProxyMode::ProxyOnly => "仅代理",
+            ProxyMode::DirectThenProxy => tr("默认直连，失败自动走代理"),
+            ProxyMode::DirectOnly => tr("仅直连"),
+            ProxyMode::ProxyThenDirect => tr("优先代理，失败回退直连"),
+            ProxyMode::ProxyOnly => tr("仅代理"),
         }
     }
 }

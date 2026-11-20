@@ -3,6 +3,7 @@ pub mod config;
 pub mod download;
 pub mod engine;
 pub mod error;
+pub mod lang;
 pub mod limiter;
 pub mod probe;
 pub mod request;
