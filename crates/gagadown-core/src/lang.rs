@@ -5,7 +5,9 @@
 //! locales and the English entry on any other locale; missing entries
 //! fall back to the key itself, so the table can grow incrementally.
 
+use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lang {
@@ -13,13 +15,44 @@ pub enum Lang {
     En,
 }
 
-static LANG: OnceLock<Lang> = OnceLock::new();
+/// Persisted language preference (`Settings::language`); `Auto` follows the
+/// system locale.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LangPref {
+    #[default]
+    Auto,
+    Zh,
+    En,
+}
 
-pub fn lang() -> Lang {
-    *LANG.get_or_init(|| match sys_locale::get_locale() {
+static DETECTED: OnceLock<Lang> = OnceLock::new();
+/// 0 = follow system, 1 = zh, 2 = en.
+static PREF: AtomicU8 = AtomicU8::new(0);
+
+fn detected() -> Lang {
+    *DETECTED.get_or_init(|| match sys_locale::get_locale() {
         Some(l) if l.to_lowercase().starts_with("zh") => Lang::Zh,
         _ => Lang::En,
     })
+}
+
+/// Apply a preference change; takes effect on the next `tr`/`trf` call.
+pub fn set_pref(pref: LangPref) {
+    let v = match pref {
+        LangPref::Auto => 0,
+        LangPref::Zh => 1,
+        LangPref::En => 2,
+    };
+    PREF.store(v, Ordering::Relaxed);
+}
+
+pub fn lang() -> Lang {
+    match PREF.load(Ordering::Relaxed) {
+        1 => Lang::Zh,
+        2 => Lang::En,
+        _ => detected(),
+    }
 }
 
 /// Translate a user-facing string. `zh` doubles as the lookup key.

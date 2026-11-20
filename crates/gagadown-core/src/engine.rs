@@ -265,6 +265,7 @@ impl Engine {
         let api_token = crate::secure_state::load_or_create_api_token()
             .map_err(|e| DlError::new(ErrorKind::Io, trf("无法创建浏览器插件配对密钥：{0}", &[&e])))?;
         let settings: Settings = read_json::<Settings>(&data_dir.join("settings.json")).unwrap_or_default().sanitized();
+        crate::lang::set_pref(settings.language);
         let state_path = data_dir.join("state.json");
         let state: State = if state_path.exists() {
             let stored = std::fs::read(&state_path)?;
@@ -349,6 +350,7 @@ impl Engine {
 
     pub fn set_settings(&self, s: Settings) -> DlResult<()> {
         let s = s.sanitized();
+        crate::lang::set_pref(s.language);
         download::set_cache_dir(s.cache_dir.clone());
         let old = self.settings();
         self.inner.limiter.set_rate(s.speed_limit);

@@ -7,6 +7,7 @@ use eframe::egui::{
 use egui_phosphor::regular as ic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use gagadown_core::config::{ProxyMode, Settings};
+use gagadown_core::lang::{self, LangPref};
 use gagadown_core::engine::{CacheKind, CacheReport, Engine, PopupEvent};
 use gagadown_core::task::{now_secs, AddRequest, DeletedRecord, Phase, RemoveMode, Status, TaskView};
 #[cfg(debug_assertions)]
@@ -608,6 +609,18 @@ fn decode_png(b: &[u8]) -> Option<egui::ColorImage> {
 
 fn route_info(v: &TaskView) -> (Option<String>, Option<u64>) {
     (v.route.clone(), v.route_latency_ms)
+}
+
+fn lang_pref_label(pref: LangPref) -> &'static str {
+    match pref {
+        LangPref::Auto => tr("跟随系统"),
+        LangPref::Zh => "简体中文",
+        LangPref::En => "English",
+    }
+}
+
+fn lang_options() -> [(LangPref, &'static str); 3] {
+    [(LangPref::Auto, tr("跟随系统")), (LangPref::Zh, "简体中文"), (LangPref::En, "English")]
 }
 
 const EXTENSION: &[(&str, &[u8])] = &[
@@ -2660,6 +2673,33 @@ impl App {
             font(11.5),
             p.weak,
         );
+
+        let lr = Rect::from_min_size(pos2(bounds.right() - 156.0, bounds.top() + 16.0), vec2(140.0, 30.0));
+        let cur = self.draft.language;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(lr), |ui| {
+            egui::ComboBox::from_id_salt("welcome_lang").width(lr.width()).selected_text(lang_pref_label(cur)).show_ui(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                for (pref, label) in lang_options() {
+                    if menu_choice(ui, label, cur == pref, p) {
+                        self.set_language(pref);
+                        ui.close();
+                    }
+                }
+            });
+        });
+    }
+
+    /// 欢迎页语言切换：直接写设置并即时生效（不走设置页 600ms 防抖）。
+    fn set_language(&mut self, pref: LangPref) {
+        let mut cand = self.draft.clone();
+        cand.language = pref;
+        cand.proxy.proxies = self.draft_proxies.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        if let Err(e) = self.engine.set_settings(cand) {
+            self.toast(format!("{e}"), true);
+            return;
+        }
+        self.draft.language = pref;
+        lang::set_pref(pref);
     }
 
     fn section(&mut self, ui: &mut Ui, sec: Sec, items: &[TaskView], p: &Pal) {
@@ -3383,6 +3423,18 @@ impl App {
                         srow(ui, p, first, tr("开机自启"), "", 52.0, |ui| toggle(ui, &mut d.launch_at_login, p));
                         srow(ui, p, first, tr("开机时静默启动"), tr("开机自启时只在托盘运行，不弹出主窗口"), 56.0, |ui| {
                             ui.add_enabled_ui(d.launch_at_login, |ui| toggle(ui, &mut d.start_minimized, p));
+                        });
+                        srow(ui, p, first, tr("语言"), tr("界面语言；跟随系统按系统语言显示"), 52.0, |ui| {
+                            egui::ComboBox::from_id_salt("lang").width(160.0).selected_text(lang_pref_label(d.language)).show_ui(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                for (pref, label) in lang_options() {
+                                    if menu_choice(ui, label, d.language == pref, p) {
+                                        d.language = pref;
+                                        lang::set_pref(pref);
+                                        ui.close();
+                                    }
+                                }
+                            });
                         });
                     });
                     group(ui, p, tr("下载"), |ui, first| {

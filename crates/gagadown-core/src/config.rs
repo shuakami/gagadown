@@ -89,6 +89,8 @@ pub struct Settings {
     pub launch_at_login: bool,
     /// When launched at login, stay in the tray instead of opening the main window.
     pub start_minimized: bool,
+    /// UI language; `Auto` follows the system locale.
+    pub language: crate::lang::LangPref,
 }
 
 pub const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
@@ -118,6 +120,7 @@ impl Default for Settings {
             cache_dir: None,
             launch_at_login: false,
             start_minimized: false,
+            language: crate::lang::LangPref::Auto,
         }
     }
 }
