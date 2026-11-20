@@ -3585,26 +3585,29 @@ impl App {
             update::Stage::Installed => (6, tr("已安装，点击重启完成更新").into(), p.accent, true, None),
             update::Stage::Failed(e) => (7, tr("更新失败").into(), p.red, true, Some(e.clone())),
         };
-        const UFADE: Duration = Duration::from_millis(150);
-        // 顺序淡变：前半段旧文案淡出、后半段新文案淡入，任意时刻只有一层文字，
-        // 不会有交叉淡化的双影模糊。只在阶段变化时触发；阶段内文案变化
-        // （如下载百分比）即时刷新，否则每个百分点都会重启动画。
+        const UFADE: Duration = Duration::from_millis(110);
+        // 亮度下沉式切换：旧文案压暗、在最暗点换成新文案再恢复亮度。
+        // 没有双层重叠（不糊）也没有空屏间隙（不闪）。
+        // 只在阶段变化时触发；阶段内文案变化（如下载百分比）即时刷新，
+        // 否则每个百分点都会重启动画。
         if ukey != self.update_label_key {
             self.update_label_prev = std::mem::replace(&mut self.update_label, ulabel.clone());
             self.update_label_at = Instant::now();
             self.update_label_key = ukey;
         }
-        let half = UFADE.as_secs_f32() * 0.5;
-        let el = self.update_label_at.elapsed().as_secs_f32();
-        if el < UFADE.as_secs_f32() {
+        const DIP: f32 = 0.45;
+        let ft = self.update_label_at.elapsed().as_secs_f32() / UFADE.as_secs_f32();
+        if ft < 1.0 {
             ui.ctx().request_repaint();
         }
-        let lr = if el < half && !self.update_label_prev.is_empty() {
-            text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, &self.update_label_prev, font(12.5), ucol.linear_multiply(1.0 - el / half), w)
+        let (utext, ualpha) = if self.update_label_prev.is_empty() {
+            (&ulabel, DIP + (1.0 - DIP) * ft.min(1.0))
+        } else if ft < 0.5 {
+            (&self.update_label_prev, 1.0 - (1.0 - DIP) * (ft / 0.5))
         } else {
-            let a = if self.update_label_prev.is_empty() { el / half } else { (el - half) / half };
-            text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, &ulabel, font(12.5), ucol.linear_multiply(a.min(1.0)), w)
+            (&ulabel, (DIP + (1.0 - DIP) * (ft - 0.5) / 0.5).min(1.0))
         };
+        let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, utext, font(12.5), ucol.linear_multiply(ualpha), w);
         if live {
             let mut resp = ui.interact(lr.expand(3.0), Id::new("about_update"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
             if let Some(t) = &utip {
