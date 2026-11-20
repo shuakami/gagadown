@@ -14,6 +14,8 @@ finish-args:
   - --filesystem=xdg-download
   - --talk-name=org.freedesktop.secrets
   - --talk-name=org.kde.StatusNotifierWatcher
+  # 内置更新器用 flatpak-spawn --host 调宿主的 flatpak install。
+  - --talk-name=org.freedesktop.Flatpak
 modules:
   - name: gagadown
     buildsystem: simple
@@ -23,37 +25,15 @@ modules:
         CARGO_HOME: /run/build/gagadown/cargo
         AWS_LC_SYS_CMAKE_BUILDER: '1'
     build-commands:
-      - patch -p1 -i gagadown-linux.patch
       - cargo build --release --offline -j 2 -p gagadown-app
       - install -D target/release/GagaDown /app/bin/GagaDown
-      - install -D io.github.shuakami.GaGaDown.desktop /app/share/applications/io.github.shuakami.GaGaDown.desktop
-      - install -D io.github.shuakami.GaGaDown.metainfo.xml /app/share/metainfo/io.github.shuakami.GaGaDown.metainfo.xml
-      - install -D io.github.shuakami.GaGaDown.png /app/share/icons/hicolor/512x512/apps/io.github.shuakami.GaGaDown.png
+      - install -D packaging/flatpak/io.github.shuakami.GaGaDown.desktop /app/share/applications/io.github.shuakami.GaGaDown.desktop
+      - install -D packaging/flatpak/io.github.shuakami.GaGaDown.metainfo.xml /app/share/metainfo/io.github.shuakami.GaGaDown.metainfo.xml
+      - install -D packaging/flatpak/io.github.shuakami.GaGaDown.png /app/share/icons/hicolor/512x512/apps/io.github.shuakami.GaGaDown.png
       - install -D packaging/flatpak/NotoSansCJK-LICENSE.txt /app/share/licenses/io.github.shuakami.GaGaDown/NotoSansCJK-LICENSE.txt
+    # 直接构建仓库 checkout：包始终随当前代码走，不再需要
+    # “旧 tag tarball + 大补丁”的投稿式流程。
     sources:
-      - type: archive
-        url: https://github.com/shuakami/gagadown/archive/refs/tags/v0.1.7.tar.gz
-        sha256: 6ac6119c596c200583152a7a0c9bdc89bede53eb9151062289c035b662935616
-        # Flathub 的 external-data-checker 据此自动跟上游 release 开更新 PR；
-        # 本地构建忽略该字段。
-        x-checker-data:
-          type: json
-          url: https://api.github.com/repos/shuakami/gagadown/releases/latest
-          version-query: .tag_name | sub("^v"; "")
-          url-query: '"https://github.com/shuakami/gagadown/archive/refs/tags/" + .tag_name + ".tar.gz"'
-          is-main-source: true
-      - type: file
-        path: gagadown-linux.patch
-      - type: file
-        path: io.github.shuakami.GaGaDown.desktop
-      - type: file
-        path: io.github.shuakami.GaGaDown.metainfo.xml
-      - type: file
-        path: io.github.shuakami.GaGaDown.png
-      - type: file
-        path: NotoSansCJKsc-Regular.ttf
-        dest: packaging/flatpak
-      - type: file
-        path: NotoSansCJK-LICENSE.txt
-        dest: packaging/flatpak
+      - type: dir
+        path: ../..
       - cargo-sources.json

@@ -3,10 +3,9 @@
 ## 构建
 
 - **不要主动运行 `flatpak-builder`**：完整 Flatpak 构建很慢，只在用户明确要求时跑。日常反复调试用 `cargo run` / `cargo build --release -p gagadown-app` 产出的 `./target/release/GagaDown`。
-- Linux 显示后端由 `settings.json` 的 `display_backend` 决定（`auto`/`wayland`/`x11`，默认 auto 跟随会话，改后需重启生效）；`GAGADOWN_FORCE_X11=1` / `GAGADOWN_FORCE_WAYLAND=1` 覆盖设置用于调试。Wayland 无法 unmap 已映射窗口，因此 Wayland 路径下 root viewport 由 `eframe::KEEP_ROOT_HIDDEN` 保持不可见（只跑事件循环），主窗口是 `main_viewport()` 的 immediate 子 viewport：关到托盘=停止 show_viewport 销毁窗口，托盘恢复=重建窗口（`App::hidden` 标志驱动，几何存 `main_size`/`main_pos`/`main_maximized`）。X11/Windows 仍走 root viewport 的传统 visible/focus 路径。
+- Linux 显示后端由 `settings.json` 的 `display_backend` 决定（`x11`/`wayland`/`auto`，默认 `x11`，改动后应用自动重启生效）；`GAGADOWN_FORCE_X11=1` / `GAGADOWN_FORCE_WAYLAND=1` 覆盖设置用于调试。Wayland 无法 unmap 已映射窗口，因此 Wayland 路径下 root viewport 由 `eframe::KEEP_ROOT_HIDDEN` 保持不可见（只跑事件循环），主窗口是 `main_viewport()` 的 immediate 子 viewport：关到托盘=停止 show_viewport 销毁窗口，托盘恢复=重建窗口（`App::hidden` 标志驱动，几何存 `main_size`/`main_pos`/`main_maximized`）。X11/Windows 仍走 root viewport 的传统 visible/focus 路径。
 - UI 追踪：`GAGADOWN_UI_TRACE=1` 时日志写入数据目录 `ui-debug.log`（本地 `~/.local/share/gagadown/`，Flatpak `~/.var/app/io.github.shuakami.GaGaDown/data/gagadown/`），每次启用清空重建。
-- `packaging/flatpak/gagadown-linux.patch` 是相对 tag `v0.1.7` 的 diff；改动任何构建输入（`Cargo.lock`、`crates/`、`extension/`、`patches/`）后必须重新生成：
-  `git diff v0.1.7 HEAD -- Cargo.lock crates/ extension/ patches/ > packaging/flatpak/gagadown-linux.patch`（先提交再生成，确保新文件也进补丁）
+- Flatpak manifest 用 `dir` source 直接构建仓库 checkout（自分发模式，见 release.yml `flatpak` job 产出的 `.flatpak`）；`gagadown-linux.patch` 已随投稿式流程一起删除。应用内更新器在 flatpak 里经 `flatpak-spawn --host flatpak install` 安装 release 资产，manifest 的 `--talk-name=org.freedesktop.Flatpak` 是它必需的权限。
 - `packaging/flatpak/cargo-sources.json` 随 `Cargo.lock` 依赖变化重新生成：`python3 flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json`（需要 aiohttp+tomlkit，脚本见 .github/workflows/release.yml 的 flatpak-sources job）
 
 ## 已知坑
