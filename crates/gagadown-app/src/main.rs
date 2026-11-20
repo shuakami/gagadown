@@ -1401,6 +1401,14 @@ fn menu_item(ui: &mut Ui, label: &str, danger: bool, p: &Pal) -> bool {
     resp.clicked()
 }
 
+/// Filled caret triangle rotated `angle` radians clockwise around `c` (egui's
+/// y-down space: positive angle = clockwise). angle=0 points down.
+fn caret_tri(pt: &Painter, c: Pos2, angle: f32, col: Color32) {
+    let (si, co) = angle.sin_cos();
+    let rp = |dx: f32, dy: f32| pos2(c.x + dx * co - dy * si, c.y + dx * si + dy * co);
+    pt.add(egui::Shape::convex_polygon(vec![rp(-5.5, -3.0), rp(5.5, -3.0), rp(0.0, 3.2)], col, Stroke::NONE));
+}
+
 /// Fused dropdown: closed it is a plain rounded button; expanded it paints the
 /// button and the item list as one continuous rounded block in the foreground
 /// layer (shared border, inner divider), and the caret flips.
@@ -1417,6 +1425,7 @@ fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<L
     }
     let union = Rect::from_min_size(r.min, vec2(r.width(), r.height() + PAD + ROW * 3.0 + PAD));
     let t = ctx.animate_bool_with_time(key.with("t"), open, 0.18);
+    let rot = std::f32::consts::PI * egui::emath::easing::cubic_out(t);
     let hover_pos = ctx.input(|i| i.pointer.hover_pos());
     // Whole-button hover tint (no inset chip: that would be a box inside the box).
     // Fades out while opening, since the expanded header is a title, not an option.
@@ -1427,7 +1436,7 @@ fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<L
         ui.painter().rect_filled(r, CornerRadius::same(8), tint);
     }
     ui.painter().text(pos2(r.left() + PAD + 10.0, r.center().y), Align2::LEFT_CENTER, lang_pref_label(cur), font(12.5), p.text);
-    ui.painter().text(pos2(r.right() - PAD - 17.0, r.center().y), Align2::CENTER_CENTER, if open { ic::CARET_UP } else { ic::CARET_DOWN }, ifont(12.0), p.weak);
+    caret_tri(ui.painter(), pos2(r.right() - PAD - 17.0, r.center().y), rot, p.weak);
     // The overlay Area is shown every frame (empty while closed) so it never
     // "becomes visible": egui would otherwise fade it in from transparent and
     // run an invisible sizing pass, which flashes the button on open.
@@ -1445,7 +1454,7 @@ fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<L
             ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = false);
         }
         ui.painter().text(pos2(btn_r.left() + PAD + 10.0, btn_r.center().y), Align2::LEFT_CENTER, lang_pref_label(cur), font(12.5), p.text);
-        ui.painter().text(pos2(btn_r.right() - PAD - 17.0, btn_r.center().y), Align2::CENTER_CENTER, ic::CARET_UP, ifont(12.0), p.weak);
+        caret_tri(ui.painter(), pos2(btn_r.right() - PAD - 17.0, btn_r.center().y), rot, p.weak);
         ui.painter().hline(btn_r.left()..=btn_r.right(), btn_r.bottom(), Stroke::new(1.0, p.line));
         let inner = Rect::from_min_max(pos2(union.left() + PAD, btn_r.bottom() + PAD), pos2(union.right() - PAD, union.bottom() - PAD));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::LEFT)));
