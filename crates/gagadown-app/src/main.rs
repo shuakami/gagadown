@@ -1401,6 +1401,74 @@ fn menu_item(ui: &mut Ui, label: &str, danger: bool, p: &Pal) -> bool {
     resp.clicked()
 }
 
+/// Fused dropdown: closed it is a plain rounded button; expanded it paints the
+/// button and the item list as one continuous rounded block in the foreground
+/// layer (shared border, inner divider), and the caret flips.
+fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<LangPref> {
+    const ROW: f32 = 30.0;
+    const PAD: f32 = 4.0;
+    let ctx = ui.ctx().clone();
+    let key = id.with("open");
+    let mut open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, false));
+    let resp = ui.interact(r, id, Sense::click());
+    if resp.clicked() {
+        open = !open;
+        ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = open);
+    }
+    let union = Rect::from_min_size(r.min, vec2(r.width(), r.height() + PAD + ROW * 3.0 + PAD));
+    let t = ctx.animate_bool_with_time(key.with("t"), open, 0.18);
+    let hover_pos = ctx.input(|i| i.pointer.hover_pos());
+    // Whole-button hover tint (no inset chip: that would be a box inside the box).
+    // Fades out while opening, since the expanded header is a title, not an option.
+    let hv = ctx.animate_bool_with_time(key.with("hv"), !open && hover_pos.is_some_and(|pos| r.contains(pos)), 0.1);
+    let tint = p.text.gamma_multiply(0.06 * hv);
+    if t <= 0.0 {
+        ui.painter().rect(r, CornerRadius::same(8), p.input, Stroke::new(1.0, p.line), StrokeKind::Inside);
+        ui.painter().rect_filled(r, CornerRadius::same(8), tint);
+    }
+    ui.painter().text(pos2(r.left() + PAD + 10.0, r.center().y), Align2::LEFT_CENTER, lang_pref_label(cur), font(12.5), p.text);
+    ui.painter().text(pos2(r.right() - PAD - 17.0, r.center().y), Align2::CENTER_CENTER, if open { ic::CARET_UP } else { ic::CARET_DOWN }, ifont(12.0), p.weak);
+    // The overlay Area is shown every frame (empty while closed) so it never
+    // "becomes visible": egui would otherwise fade it in from transparent and
+    // run an invisible sizing pass, which flashes the button on open.
+    let shown = Rect::from_min_size(union.min, vec2(union.width(), egui::lerp(r.height()..=union.height(), egui::emath::easing::cubic_out(t))));
+    let sel = egui::Area::new(id.with("menu")).order(egui::Order::Foreground).fixed_pos(union.min).fade_in(false).interactable(open).show(&ctx, |ui| {
+        if t <= 0.0 {
+            return None;
+        }
+        ui.painter().rect_filled(shown.translate(vec2(0.0, 2.0)), CornerRadius::same(8), Color32::from_black_alpha(50));
+        ui.painter().rect(shown, CornerRadius::same(8), p.input, Stroke::new(1.0, p.line), StrokeKind::Inside);
+        ui.set_clip_rect(shown);
+        let btn_r = Rect::from_min_size(union.min, vec2(union.width(), r.height()));
+        ui.painter().rect_filled(btn_r, CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, tint);
+        if ui.interact(btn_r, id.with("b2"), Sense::click()).clicked() {
+            ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = false);
+        }
+        ui.painter().text(pos2(btn_r.left() + PAD + 10.0, btn_r.center().y), Align2::LEFT_CENTER, lang_pref_label(cur), font(12.5), p.text);
+        ui.painter().text(pos2(btn_r.right() - PAD - 17.0, btn_r.center().y), Align2::CENTER_CENTER, ic::CARET_UP, ifont(12.0), p.weak);
+        ui.painter().hline(btn_r.left()..=btn_r.right(), btn_r.bottom(), Stroke::new(1.0, p.line));
+        let inner = Rect::from_min_max(pos2(union.left() + PAD, btn_r.bottom() + PAD), pos2(union.right() - PAD, union.bottom() - PAD));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::LEFT)));
+        child.set_clip_rect(inner.intersect(shown));
+        child.spacing_mut().item_spacing.y = 1.0;
+        let mut pick = None;
+        for (pref, label) in lang_options() {
+            if menu_choice(&mut child, label, cur == pref, p) {
+                pick = Some(pref);
+            }
+        }
+        pick
+    }).inner;
+    let mut pick = None;
+    if open {
+        pick = sel;
+        if pick.is_some() || (ctx.input(|i| i.pointer.any_click()) && ctx.input(|i| i.pointer.interact_pos()).is_some_and(|pos| !union.contains(pos))) {
+            ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = false);
+        }
+    }
+    pick
+}
+
 /// Dropdown entry styled like `menu_item`, with a check on the selected one.
 fn menu_choice(ui: &mut Ui, label: &str, selected: bool, p: &Pal) -> bool {
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
@@ -2734,18 +2802,9 @@ impl App {
         );
 
         let lr = Rect::from_min_size(pos2(bounds.right() - 156.0, bounds.top() + 16.0), vec2(140.0, 30.0));
-        let cur = self.draft.language;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(lr), |ui| {
-            egui::ComboBox::from_id_salt("welcome_lang").width(lr.width()).selected_text(lang_pref_label(cur)).show_ui(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                for (pref, label) in lang_options() {
-                    if menu_choice(ui, label, cur == pref, p) {
-                        self.set_language(pref);
-                        ui.close();
-                    }
-                }
-            });
-        });
+        if let Some(pref) = lang_picker(ui, lr, Id::new("welcome_lang"), self.draft.language, p) {
+            self.set_language(pref);
+        }
     }
 
     /// 欢迎页语言切换：直接写设置并即时生效（不走设置页 600ms 防抖）。
@@ -3507,16 +3566,11 @@ impl App {
                             ui.add_enabled_ui(d.launch_at_login, |ui| toggle(ui, &mut d.start_minimized, p));
                         });
                         srow(ui, p, first, tr("语言"), tr("界面语言；跟随系统按系统语言显示"), 52.0, |ui| {
-                            egui::ComboBox::from_id_salt("lang").width(160.0).selected_text(lang_pref_label(d.language)).show_ui(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for (pref, label) in lang_options() {
-                                    if menu_choice(ui, label, d.language == pref, p) {
-                                        d.language = pref;
-                                        lang::set_pref(pref);
-                                        ui.close();
-                                    }
-                                }
-                            });
+                            let (r, _) = ui.allocate_exact_size(vec2(160.0, 30.0), Sense::hover());
+                            if let Some(pref) = lang_picker(ui, r, Id::new("lang"), d.language, p) {
+                                d.language = pref;
+                                lang::set_pref(pref);
+                            }
                         });
                         #[cfg(target_os = "linux")]
                         srow(ui, p, first, tr("显示后端"), tr("Linux 使用的显示服务器，更改后自动重启生效"), 56.0, |ui| {
