@@ -18,13 +18,14 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 static ICON: &[u8] = include_bytes!("../../../assets/icon_256.rgba");
+static CJK_FONT: &[u8] = include_bytes!("../../../packaging/flatpak/NotoSansCJKsc-Regular.ttf");
 const DEFAULT_ACCENT: Color32 = Color32::from_rgb(0, 120, 212);
 const PAGE_TRANSITION_SECS: f32 = 0.42;
 const PAGE_TRANSITION_OFFSET: f32 = 18.0;
 const PAGE_EXIT_END: f32 = 0.55;
 const PAGE_ENTER_START: f32 = 0.32;
 const NAV_INDICATOR_HEIGHT: f32 = 48.0;
-const NAV_INDICATOR_EXTEND: f32 = 24.0;
+const NAV_INDICATOR_SECS: f32 = 0.28;
 #[cfg(debug_assertions)]
 const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
 #[cfg(not(debug_assertions))]
@@ -206,45 +207,27 @@ impl NavIndicator {
     }
 
     fn sample(&mut self, now: Instant) -> (f32, f32, bool) {
-        // Keep the three edge actions sequential: extend one edge, translate as a
-        // rigid shape, then let the opposite edge catch up and contract.
-        let t = (now.duration_since(self.started).as_secs_f32() / PAGE_TRANSITION_SECS).clamp(0.0, 1.0);
+        let t = (now.duration_since(self.started).as_secs_f32() / NAV_INDICATOR_SECS).clamp(0.0, 1.0);
         let direction = if self.to_y >= self.from_y { 1.0 } else { -1.0 };
         let start_top = self.from_y - self.from_height * 0.5;
         let start_bottom = self.from_y + self.from_height * 0.5;
         let target_top = self.to_y - NAV_INDICATOR_HEIGHT * 0.5;
         let target_bottom = self.to_y + NAV_INDICATOR_HEIGHT * 0.5;
-        let (top, bottom) = if t < 0.35 {
-            let extend = page_ease(t / 0.35) * NAV_INDICATOR_EXTEND;
-            if direction > 0.0 {
-                (start_top, start_bottom + extend)
-            } else {
-                (start_top - extend, start_bottom)
-            }
-        } else if t < 0.75 {
-            let translate = page_ease((t - 0.35) / 0.40);
-            let (stretched_top, stretched_bottom) = if direction > 0.0 {
-                (start_top, start_bottom + NAV_INDICATOR_EXTEND)
-            } else {
-                (start_top - NAV_INDICATOR_EXTEND, start_bottom)
-            };
-            let leading_start = if direction > 0.0 { stretched_bottom } else { stretched_top };
-            let leading_target = if direction > 0.0 { target_bottom } else { target_top };
-            let offset = (leading_target - leading_start) * translate;
-            (stretched_top + offset, stretched_bottom + offset)
+        // Both edges travel toward the target at the same time. The leading edge
+        // runs ahead (0.0-0.7) while the trailing edge follows offset (0.3-1.0),
+        // so the bar stretches slightly mid-flight but never pauses at one end.
+        let lead = page_ease((t / 0.7).clamp(0.0, 1.0));
+        let trail = page_ease(((t - 0.3) / 0.7).clamp(0.0, 1.0));
+        let (top, bottom) = if direction > 0.0 {
+            (
+                start_top + (target_top - start_top) * trail,
+                start_bottom + (target_bottom - start_bottom) * lead,
+            )
         } else {
-            let contract = page_ease((t - 0.75) / 0.25);
-            if direction > 0.0 {
-                let translate = target_bottom - (start_bottom + NAV_INDICATOR_EXTEND);
-                let top_start = start_top + translate;
-                let top = top_start + (target_top - top_start) * contract;
-                (top, target_bottom)
-            } else {
-                let translate = target_top - (start_top - NAV_INDICATOR_EXTEND);
-                let bottom_start = start_bottom + translate;
-                let bottom = bottom_start + (target_bottom - bottom_start) * contract;
-                (target_top, bottom)
-            }
+            (
+                start_top + (target_top - start_top) * lead,
+                start_bottom + (target_bottom - start_bottom) * trail,
+            )
         };
         let y = (top + bottom) * 0.5;
         let height = bottom - top;
@@ -652,19 +635,35 @@ struct ExtGuide {
 struct Browser {
     key: &'static str,
     name: &'static str,
-    exe: std::path::PathBuf,
+    exe: Option<std::path::PathBuf>,
     page: &'static str,
     store_url: Option<&'static str>,
 }
 
 fn browsers() -> Vec<Browser> {
-    [
+    let choices = [
         ("chrome", "Google Chrome", "chrome.exe", "chrome://extensions", Some(CHROME_STORE_URL)),
         ("edge", "Microsoft Edge", "msedge.exe", "edge://extensions", None),
-    ]
-    .into_iter()
-    .filter_map(|(key, name, exe, page, store_url)| Some(Browser { key, name, exe: win::app_path(exe)?, page, store_url }))
-    .collect()
+    ];
+    let flatpak = std::env::var_os("FLATPAK_ID").is_some();
+    choices.into_iter().filter_map(|(key, name, exe, page, store_url)| {
+        let path = win::app_path(exe);
+        (flatpak || path.is_some()).then_some(Browser {
+            key, name, exe: path, page, store_url,
+        })
+    }).collect()
+}
+
+fn launch_browser(browser: &Browser, uri: &str) -> std::io::Result<()> {
+    if std::env::var_os("FLATPAK_ID").is_some() {
+        // xdg-open delegates to the host desktop portal, which opens the URI in
+        // the user's chosen browser without exposing host executables to the sandbox.
+        std::process::Command::new("xdg-open").arg(uri).spawn().map(|_| ())
+    } else if let Some(exe) = &browser.exe {
+        std::process::Command::new(exe).arg(uri).spawn().map(|_| ())
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "browser executable not found"))
+    }
 }
 
 /// Writes the bundled extension into `<data>/extension`, touching only files that changed.
@@ -1065,10 +1064,167 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
         clip.add(Shape::line(pts, Stroke::new(1.6, p.green)));
     }
     pt.text(r.right_top(), Align2::RIGHT_TOP, speed((max / 1.15) as f64), font(10.5), p.weak);
+
+    // Steam-style hover: highlight the bar under the pointer and show its speed/age.
+    if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
+        && r.contains(pos)
+    {
+        let i = ((pos.x - r.left()) / bw - slide - off as f32).floor();
+        if i >= 0.0 && (i as usize) < data.len() {
+            let i = i as usize;
+            let bx = r.left() + (off + i) as f32 * bw + slide * bw;
+            pt.rect_filled(
+                Rect::from_min_max(pos2(bx, r.top()), pos2(bx + bw, r.bottom())),
+                CornerRadius::ZERO,
+                p.accent.gamma_multiply(0.16),
+            );
+            let ago = data.len() - 1 - i;
+            let tip = if ago == 0 {
+                speed(data[i] as f64)
+            } else {
+                format!("{} · {} 秒前", speed(data[i] as f64), ago)
+            };
+            let tw = pt.layout_no_wrap(tip.clone(), font(11.5), p.text).size().x + 16.0;
+            let mut tr = Rect::from_center_size(pos2(pos.x, r.top() + 12.0), vec2(tw, 22.0));
+            tr = tr.translate(vec2(
+                (r.left() - tr.left()).max(0.0) - (tr.right() - r.right()).max(0.0),
+                0.0,
+            ));
+            pt.rect_filled(tr, CornerRadius::same(5), p.chrome);
+            pt.rect_stroke(tr, CornerRadius::same(5), Stroke::new(1.0, p.line), StrokeKind::Inside);
+            pt.text(tr.center(), Align2::CENTER_CENTER, tip, font(11.5), p.text);
+        }
+    }
+}
+
+struct UiTraceMakeWriter {
+    tx: std::sync::mpsc::SyncSender<Vec<u8>>,
+    dropped: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+struct UiTraceLine {
+    tx: std::sync::mpsc::SyncSender<Vec<u8>>,
+    dropped: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    bytes: Vec<u8>,
+}
+
+impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for UiTraceMakeWriter {
+    type Writer = UiTraceLine;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        UiTraceLine {
+            tx: self.tx.clone(),
+            dropped: self.dropped.clone(),
+            bytes: Vec::with_capacity(256),
+        }
+    }
+}
+
+impl std::io::Write for UiTraceLine {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for UiTraceLine {
+    fn drop(&mut self) {
+        if !self.bytes.is_empty()
+            && self.tx.try_send(std::mem::take(&mut self.bytes)).is_err()
+        {
+            self.dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 /// Writes `crash.log` on panic and `freeze.log` when the UI thread is stuck in one stage.
 fn install_diagnostics(dir: std::path::PathBuf) {
+    if std::env::var_os("GAGADOWN_UI_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        use tracing_subscriber::{filter::Targets, prelude::*};
+
+        let log_path = dir.join("ui-debug.log");
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&log_path);
+        let log_file = match log_file {
+            Ok(file) => Some(file),
+            Err(err) => {
+                eprintln!("GaGaDown: cannot open UI diagnostic log {}: {err}", log_path.display());
+                // Keep the normal crash/freeze diagnostics installed below.
+                None
+            }
+        };
+
+        if let Some(log_file) = log_file {
+            // Trace events are frequent; queue them off the UI/event-loop thread so
+            // filesystem latency cannot become part of the stall being measured.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4096);
+            let dropped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let writer_dropped = dropped.clone();
+            match std::thread::Builder::new()
+                .name("ui-trace-writer".into())
+                .spawn(move || {
+                    use std::io::Write;
+                    let mut out = std::io::BufWriter::new(log_file);
+                    let mut pending = 0usize;
+                    loop {
+                        match rx.recv_timeout(Duration::from_millis(250)) {
+                            Ok(line) => {
+                                if out.write_all(&line).is_err() {
+                                    break;
+                                }
+                                pending += 1;
+                                if pending >= 64 {
+                                    if out.flush().is_err() {
+                                        break;
+                                    }
+                                    pending = 0;
+                                }
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                if pending > 0 && out.flush().is_err() {
+                                    break;
+                                }
+                                pending = 0;
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                        let count = writer_dropped.swap(0, std::sync::atomic::Ordering::Relaxed);
+                        if count > 0 {
+                            let _ = writeln!(out, "[diagnostic] dropped {count} UI trace records (writer queue full)");
+                            let _ = out.flush();
+                            pending = 0;
+                        }
+                    }
+                    let _ = out.flush();
+                })
+            {
+                Err(err) => eprintln!("GaGaDown: cannot start UI diagnostic writer: {err}"),
+                Ok(_) => {
+                    let make_writer = UiTraceMakeWriter { tx, dropped };
+                    let trace = tracing_subscriber::fmt::layer()
+                        .with_timer(tracing_subscriber::fmt::time::uptime())
+                        .with_ansi(false)
+                        .with_writer(make_writer);
+                    let result = tracing_subscriber::registry()
+                        .with(trace)
+                        .with(Targets::new().with_target("gagadown_ui", tracing::Level::TRACE))
+                        .try_init();
+                    match result {
+                        Ok(()) => tracing::info!(target: "gagadown_ui", log_path = %log_path.display(), "UI trace enabled"),
+                        Err(err) => eprintln!("GaGaDown: failed to initialize UI trace: {err}"),
+                    }
+                }
+            }
+        };
+    }
+
     fn append(path: &Path, line: &str) {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
@@ -1102,6 +1258,7 @@ fn install_diagnostics(dir: std::path::PathBuf) {
             if t > tier {
                 tier = t;
                 append(&freeze, &format!("[{}] 界面线程卡在「{}」已 {secs} 秒\n", now_secs(), eframe::stall::name(stage)));
+                tracing::warn!(target: "gagadown_ui", stage = eframe::stall::name(stage), secs, "UI watchdog");
             }
         }
     });
@@ -1692,6 +1849,27 @@ mod win {
         None
     }
     pub fn decorate(_frame: &eframe::Frame) {}
+    #[cfg(target_os = "linux")]
+    pub fn tray(
+        ctx: eframe::egui::Context,
+        rgba: Vec<u8>,
+        quit: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Option<Box<dyn std::any::Any>> {
+        use super::GaGaTray;
+        use ksni::blocking::TrayMethods;
+        let mut pixels = Vec::with_capacity(rgba.len());
+        for px in rgba.chunks_exact(4) {
+            pixels.extend_from_slice(&[px[3], px[0], px[1], px[2]]);
+        }
+        let tray = GaGaTray { ctx, quit, hidden, icon: ksni::Icon { width: 32, height: 32, data: pixels } }
+            .disable_dbus_name(true)
+            .assume_sni_available(true)
+            .spawn()
+            .ok()?;
+        Some(Box::new(tray))
+    }
+    #[cfg(not(target_os = "linux"))]
     pub fn tray(
         _ctx: eframe::egui::Context,
         _rgba: Vec<u8>,
@@ -1702,6 +1880,46 @@ mod win {
     }
     pub fn file_icon(_path: &str, _exists: bool, _px: i32) -> Option<eframe::egui::ColorImage> {
         None
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct GaGaTray {
+    ctx: eframe::egui::Context,
+    quit: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    icon: ksni::Icon,
+}
+
+#[cfg(target_os = "linux")]
+impl GaGaTray {
+    fn show_window(&self) {
+        use eframe::egui::ViewportCommand as V;
+        self.hidden.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.ctx.send_viewport_cmd(V::Visible(true));
+        self.ctx.send_viewport_cmd(V::Minimized(false));
+        self.ctx.send_viewport_cmd(V::Focus);
+        self.ctx.request_repaint();
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ksni::Tray for GaGaTray {
+    fn id(&self) -> String { "dev.gagadown.GaGaDown".into() }
+    fn title(&self) -> String { "GaGaDown".into() }
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> { vec![self.icon.clone()] }
+    fn activate(&mut self, _x: i32, _y: i32) { self.show_window(); }
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        use ksni::menu::{MenuItem, StandardItem};
+        let mut show = StandardItem { label: "显示主界面".into(), ..Default::default() };
+        show.activate = Box::new(|tray: &mut GaGaTray| tray.show_window());
+        let mut exit = StandardItem { label: "退出".into(), ..Default::default() };
+        exit.activate = Box::new(|tray: &mut GaGaTray| {
+            tray.quit.store(true, std::sync::atomic::Ordering::SeqCst);
+            tray.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+            tray.ctx.request_repaint();
+        });
+        vec![show.into(), MenuItem::Separator, exit.into()]
     }
 }
 
@@ -1761,6 +1979,8 @@ fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let read = |c: &[&str]| c.iter().find_map(|p| std::fs::read(p).ok());
     let mut base = Vec::new();
+    fonts.font_data.insert("cjk".into(), Arc::new(egui::FontData::from_static(CJK_FONT).tweak(sharp())));
+    base.push("cjk".to_string());
     if let Some(d) = read(&[
         "C:\\Windows\\Fonts\\msyh.ttc",
         "C:\\Windows\\Fonts\\msyh.ttf",
@@ -1787,7 +2007,7 @@ fn setup_fonts(ctx: &egui::Context) {
     icons.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name("icons".into()), icons);
     if !base.is_empty() {
-        fonts.families.entry(FontFamily::Monospace).or_default().push("ui".into());
+        fonts.families.entry(FontFamily::Monospace).or_default().push("cjk".into());
     }
     let mut bold_fam: Vec<String> = Vec::new();
     if let Some(d) = read(&["C:\\Windows\\Fonts\\msyhbd.ttc", "C:\\Windows\\Fonts\\msyhbd.ttf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]) {
@@ -1877,10 +2097,11 @@ impl App {
     fn install_extension(&mut self, ctx: &egui::Context, i: usize) {
         let b = self.browsers.get(i).cloned();
         if let Some((b, url)) = b.as_ref().and_then(|b| Some((b, b.store_url?))) {
-            match std::process::Command::new(&b.exe).arg(url).spawn() {
+            match launch_browser(b, url) {
                 Ok(_) => {
                     self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
-                    self.toast(format!("已在 {} 中打开插件商店页面", b.name), false);
+                    let target = if std::env::var_os("FLATPAK_ID").is_some() { "系统默认浏览器" } else { b.name };
+                    self.toast(format!("已请求 {target} 打开插件商店页面"), false);
                 }
                 Err(e) => self.toast(format!("打开 {} 失败：{e}，请复制下方商店地址手动打开", b.name), true),
             }
@@ -1893,7 +2114,7 @@ impl App {
         match b {
             Some(b) => {
                 ctx.copy_text(b.page.to_string());
-                match std::process::Command::new(&b.exe).spawn() {
+                match launch_browser(&b, b.page) {
                     Ok(_) => self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() }),
                     Err(e) => self.toast(format!("打开 {} 失败：{e}", b.name), true),
                 }
@@ -2149,7 +2370,12 @@ impl App {
         let maxr = close.translate(vec2(-bw, 0.0));
         let minr = maxr.translate(vec2(-bw, 0.0));
         if chrome_btn(ui, close, Glyph::Close, p) {
-            ctx.send_viewport_cmd(ViewportCommand::Close);
+            if self.tray.is_some() {
+                self.hidden.store(true, Ordering::SeqCst);
+                ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+            } else {
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
         }
         if chrome_btn(ui, maxr, if maximized { Glyph::Restore } else { Glyph::Max }, p) {
             ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
@@ -2844,7 +3070,7 @@ impl App {
         let (mut act, mut copy, mut open, mut tab, mut copy_page, mut copy_token) = (None, false, false, None, None, false);
         let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
         let browsers = self.browsers.clone();
-        let icons: Vec<_> = browsers.iter().map(|b| self.file_tex(&ctx, "b.exe", Some(&b.exe))).collect();
+        let icons: Vec<_> = browsers.iter().map(|b| self.file_tex(&ctx, "b.exe", b.exe.as_deref())).collect();
         let sel = self.ext_tab.min(browsers.len().saturating_sub(1));
         let on = browsers.get(sel).is_some_and(|b| self.ext_connected(b.key));
         let since = self.ext_guide.as_ref().filter(|g| g.browser == sel).map(|g| g.since);
@@ -2933,7 +3159,9 @@ impl App {
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
                 text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装步骤", bold(13.5), p.text, w);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-                let hint = if b.store_url.is_some() {
+                let hint = if std::env::var_os("FLATPAK_ID").is_some() {
+                    "Flatpak 会调用系统默认浏览器；请确认打开的是 Chrome 或 Edge"
+                } else if b.store_url.is_some() {
                     "点“打开商店”前往 Chrome 网上应用店，安装后完成配对并启用"
                 } else {
                     "点“安装插件”会打开浏览器，并复制好扩展页地址"
@@ -2993,13 +3221,17 @@ impl App {
                 }
                 ui.add_space(16.0);
                 let (row, _) = ui.allocate_exact_size(vec2(w, 22.0), Sense::hover());
-                let x0 = row.left() + ind;
-                if linked {
-                    ui.painter().text(pos2(x0, row.center().y), Align2::LEFT_CENTER, ic::CHECK_CIRCLE, ifont(15.0), p.green);
-                    text_line(ui.painter(), pos2(x0 + 22.0, row.center().y), Align2::LEFT_CENTER, "安装成功，插件已连接", font(13.0), p.green, w - ind - 30.0);
+                let (label, size, color) = if linked {
+                    ("安装成功，插件已连接", 13.0, p.green)
                 } else {
-                    ui.put(Rect::from_center_size(pos2(x0 + 7.0, row.center().y), vec2(14.0, 14.0)), egui::Spinner::new().size(14.0).color(p.weak));
-                    text_line(ui.painter(), pos2(x0 + 22.0, row.center().y), Align2::LEFT_CENTER, "等待插件连接…", font(12.5), p.weak, w - ind - 30.0);
+                    ("等待插件连接…", 12.5, p.weak)
+                };
+                let icon = row.left_center() + vec2(7.0, 0.0);
+                text_line(ui.painter(), row.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, label, font(size), color, w - 22.0);
+                if linked {
+                    ui.painter().text(icon, Align2::CENTER_CENTER, ic::CHECK_CIRCLE, ifont(15.0), color);
+                } else {
+                    egui::Spinner::new().color(color).paint_at(ui, Rect::from_center_size(icon, vec2(14.0, 14.0)));
                 }
             });
         });
@@ -3544,6 +3776,7 @@ impl App {
                 .with_decorations(false)
                 .with_resizable(false)
                 .with_always_on_top()
+                .with_app_id("dev.gagadown.GaGaDown")
                 .with_icon(self.icon.clone());
             let mut close = false;
             ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("popup", pop.key)), builder, |ui, _| {
@@ -3962,10 +4195,10 @@ fn main() -> eframe::Result {
     }
     let icon = Arc::new(egui::IconData { rgba: ICON.to_vec(), width: 256, height: 256 });
     let accent = win::accent().unwrap_or(DEFAULT_ACCENT);
-    let opts = eframe::NativeOptions {
+    let mut opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("GaGaDown")
-            .with_app_id("gagadown")
+            .with_app_id("dev.gagadown.GaGaDown")
             .with_inner_size([1120.0, 720.0])
             .with_min_inner_size([760.0, 480.0])
             .with_decorations(false)
@@ -3973,6 +4206,17 @@ fn main() -> eframe::Result {
         centered: true,
         ..Default::default()
     };
+    // Wayland can't unmap a window, so close-to-tray (Visible(false)) only works
+    // under X11/XWayland. Default to it for tray support (DISPLAY is always set
+    // when XWayland is available); GAGADOWN_FORCE_WAYLAND opts back into the
+    // Wayland backend for debugging.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_none() && std::env::var_os("DISPLAY").is_some() {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        opts.event_loop_builder = Some(Box::new(|builder| {
+            builder.with_x11();
+        }));
+    }
     #[cfg(windows)]
     eframe::epaint::text::set_glyph_rasterizer(win::gdi_glyph);
     eframe::run_native(

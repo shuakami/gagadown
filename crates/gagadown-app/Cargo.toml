@@ -32,3 +32,7 @@ tray-icon = "0.26"
 raw-window-handle = "0.6"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Environment"] }
 winreg = "0.56.0"
+
+[target."cfg(target_os = \"linux\")".dependencies]
+ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
+winit = { version = "0.30.13", default-features = false, features = ["x11"] }

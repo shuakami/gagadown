@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=GaGaDown
+Comment=Fast desktop download manager
+Exec=GagaDown
+Icon=dev.gagadown.GaGaDown
+StartupWMClass=GaGaDown
+Terminal=false
+Type=Application
+Categories=Network;FileTransfer;
+Keywords=download;manager;

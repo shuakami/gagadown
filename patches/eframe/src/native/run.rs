@@ -102,14 +102,14 @@ impl<T: WinitApp> WinitAppWrapper<T> {
         let mut exit = false;
         let mut save = false;
 
-        log::trace!("event_result: {event_result:?}");
+        log::trace!(target: "gagadown_ui", "event_result: {event_result:?}");
 
         let mut event_result = event_result;
 
         if cfg!(target_os = "windows")
             && let Ok(EventResult::RepaintNow(window_id)) = event_result
         {
-            log::trace!("RepaintNow of {window_id:?}");
+            log::trace!(target: "gagadown_ui", "RepaintNow of {window_id:?}");
             self.windows_next_repaint_times
                 .insert(window_id, Instant::now());
 
@@ -123,13 +123,13 @@ impl<T: WinitApp> WinitAppWrapper<T> {
                 event_result
             }
             EventResult::RepaintNow(window_id) => {
-                log::trace!("RepaintNow of {window_id:?}");
+                log::trace!(target: "gagadown_ui", "RepaintNow of {window_id:?}");
                 self.windows_next_repaint_times
                     .insert(window_id, Instant::now());
                 event_result
             }
             EventResult::RepaintNext(window_id) => {
-                log::trace!("RepaintNext of {window_id:?}");
+                log::trace!(target: "gagadown_ui", "RepaintNext of {window_id:?}");
                 self.windows_next_repaint_times
                     .insert(window_id, Instant::now());
                 event_result
@@ -183,10 +183,14 @@ impl<T: WinitApp> WinitAppWrapper<T> {
             }
         }
 
-        self.check_redraw_requests(event_loop);
+        // Defer direct paints of hidden windows to `new_events`: on X11, winit
+        // drains user events in a `try_recv` loop, and painting here would push
+        // another `RequestRepaint` onto that channel, livelocking the loop so
+        // X input and `RedrawRequested` are never dispatched.
+        self.check_redraw_requests(event_loop, false);
     }
 
-    fn check_redraw_requests(&mut self, event_loop: &ActiveEventLoop) {
+    fn check_redraw_requests(&mut self, event_loop: &ActiveEventLoop, paint_hidden: bool) {
         let _stage = crate::stall::Stage::enter(crate::stall::SCHEDULE);
         let now = Instant::now();
 
@@ -199,15 +203,31 @@ impl<T: WinitApp> WinitAppWrapper<T> {
                 }
 
                 if let Some(window) = self.winit_app.window(*window_id) {
+                    let hidden = is_invisible_or_minimized(&window);
+                    let dispatch = if hidden {
+                        if paint_hidden { "direct" } else { "deferred" }
+                    } else {
+                        "winit"
+                    };
+                    log::trace!(target: "gagadown_ui",
+                        "redraw_due window={window_id:?} dispatch={dispatch} late_ms={}",
+                        now.saturating_duration_since(*repaint_time).as_millis(),
+                    );
+                    if hidden && !paint_hidden {
+                        // Keep the past-due entry: `new_events` repaints it,
+                        // which also yields `WaitUntil(past)` below so winit
+                        // starts a new iteration immediately.
+                        return true;
+                    }
                     // On Windows, invisible windows don't receive RedrawRequested
                     // events, so pending viewport commands (e.g. Visible(true)) would
                     // never be processed. We collect these windows to paint them
                     // directly below.
                     // See: https://github.com/emilk/egui/issues/5229
-                    if is_invisible_or_minimized(&window) {
+                    if hidden {
                         invisible_window_ids.push(*window_id);
                     } else {
-                        log::trace!("request_redraw for {window_id:?}");
+                        log::trace!(target: "gagadown_ui", "request_redraw for {window_id:?}");
                         // Don't switch to `ControlFlow::Poll` here. `request_redraw`
                         // is enough to wake the event loop, and on Wayland the
                         // `RedrawRequested` event is only delivered once the
@@ -217,7 +237,7 @@ impl<T: WinitApp> WinitAppWrapper<T> {
                         window.request_redraw();
                     }
                 } else {
-                    log::trace!("No window found for {window_id:?}");
+                    log::trace!(target: "gagadown_ui", "No window found for {window_id:?}");
                 }
                 false
             });
@@ -320,10 +340,14 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
                         .winit_app
                         .egui_ctx()
                         .map_or(0, |ctx| ctx.cumulative_pass_nr_for(viewport_id));
+                    log::trace!(target: "gagadown_ui",
+                        "repaint_request viewport={viewport_id:?} pass={cumulative_pass_nr} current_pass={current_pass_nr} overdue_ms={}",
+                        Instant::now().saturating_duration_since(when).as_millis(),
+                    );
                     if current_pass_nr == cumulative_pass_nr
                         || current_pass_nr == cumulative_pass_nr + 1
                     {
-                        log::trace!("UserEvent::RequestRepaint scheduling repaint at {when:?}");
+                        log::trace!(target: "gagadown_ui", "UserEvent::RequestRepaint scheduling repaint at {when:?}");
                         if let Some(window_id) =
                             self.winit_app.window_id_from_viewport_id(viewport_id)
                         {
@@ -343,7 +367,7 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
                             Ok(EventResult::Wait)
                         }
                     } else {
-                        log::trace!("Got outdated UserEvent::RequestRepaint");
+                        log::trace!(target: "gagadown_ui", "Got outdated UserEvent::RequestRepaint");
                         Ok(EventResult::Wait) // old request - we've already repainted
                     }
                 }
@@ -358,10 +382,10 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
         if let winit::event::StartCause::ResumeTimeReached { .. } = cause {
-            log::trace!("Woke up to check next_repaint_time");
+            log::trace!(target: "gagadown_ui", "Woke up to check next_repaint_time");
         }
 
-        self.check_redraw_requests(event_loop);
+        self.check_redraw_requests(event_loop, true);
     }
 
     fn window_event(
@@ -372,6 +396,18 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
     ) {
         profiling::function_scope!(egui_winit::short_window_event_description(&event));
         let _stage = crate::stall::Stage::enter(crate::stall::EVENT);
+        let trace_event = matches!(
+            event,
+            winit::event::WindowEvent::RedrawRequested
+                | winit::event::WindowEvent::MouseInput { .. }
+                | winit::event::WindowEvent::CloseRequested
+                | winit::event::WindowEvent::Occluded(_)
+        );
+        let event_description = trace_event.then(|| egui_winit::short_window_event_description(&event));
+        let event_started = Instant::now();
+        if let Some(description) = event_description {
+            log::trace!(target: "gagadown_ui", "window_event_begin window={window_id:?} event={description}");
+        }
 
         // Nb: Make sure this guard is dropped after this function returns.
         event_loop_context::with_event_loop_context(event_loop, move || {
@@ -383,6 +419,9 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
             };
 
             self.handle_event_result(event_loop, event_result);
+            if let Some(description) = event_description {
+                log::trace!(target: "gagadown_ui", "window_event_end window={window_id:?} event={description} elapsed_ms={}", event_started.elapsed().as_millis());
+            }
         });
     }
 }
