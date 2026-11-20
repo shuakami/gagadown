@@ -40,7 +40,6 @@ static IS_WAYLAND: AtomicBool = AtomicBool::new(false);
 /// The main window lives in this child viewport on Wayland: hiding it means
 /// destroying the window entirely (true hide-to-tray), and the never-mapped
 /// root viewport only hosts the event loop.
-#[cfg(target_os = "linux")]
 fn main_viewport() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("gagadown-main")
 }
@@ -4542,6 +4541,7 @@ fn main() -> eframe::Result {
     }
     let icon = Arc::new(egui::IconData { rgba: ICON.to_vec(), width: 256, height: 256 });
     let accent = win::accent().unwrap_or(DEFAULT_ACCENT);
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("GaGaDown")
