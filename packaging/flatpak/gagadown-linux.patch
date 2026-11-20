@@ -313,7 +313,7 @@ index a4a4364..a792b30 100644
 +ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 +winit = { version = "0.30.13", default-features = false, features = ["x11"] }
 diff --git a/crates/gagadown-app/src/main.rs b/crates/gagadown-app/src/main.rs
-index cbfba48..c6dd00f 100644
+index cbfba48..93d1864 100644
 --- a/crates/gagadown-app/src/main.rs
 +++ b/crates/gagadown-app/src/main.rs
 @@ -18,13 +18,14 @@ use std::time::{Duration, Instant};
@@ -707,7 +707,7 @@ index cbfba48..c6dd00f 100644
 +
 +#[cfg(target_os = "linux")]
 +impl ksni::Tray for GaGaTray {
-+    fn id(&self) -> String { "dev.gagadown.GaGaDown".into() }
++    fn id(&self) -> String { "io.github.shuakami.GaGaDown".into() }
 +    fn title(&self) -> String { "GaGaDown".into() }
 +    fn icon_pixmap(&self) -> Vec<ksni::Icon> { vec![self.icon.clone()] }
 +    fn activate(&mut self, _x: i32, _y: i32) { self.show_window(); }
@@ -957,7 +957,7 @@ index cbfba48..c6dd00f 100644
                  .with_decorations(false)
                  .with_resizable(false)
                  .with_always_on_top()
-+                .with_app_id("dev.gagadown.GaGaDown")
++                .with_app_id("io.github.shuakami.GaGaDown")
                  .with_icon(self.icon.clone());
              let mut close = false;
              ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("popup", pop.key)), builder, |ui, _| {
@@ -970,7 +970,7 @@ index cbfba48..c6dd00f 100644
          viewport: egui::ViewportBuilder::default()
              .with_title("GaGaDown")
 -            .with_app_id("gagadown")
-+            .with_app_id("dev.gagadown.GaGaDown")
++            .with_app_id("io.github.shuakami.GaGaDown")
              .with_inner_size([1120.0, 720.0])
              .with_min_inner_size([760.0, 480.0])
              .with_decorations(false)

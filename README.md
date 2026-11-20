@@ -50,8 +50,8 @@ Flatpak 支持目前为预览。安装 `flatpak-builder` 后，可在仓库根�
 
 ```bash
 flatpak-builder --user --install-deps-from=flathub --install --force-clean \
-  target/flatpak-build packaging/flatpak/dev.gagadown.GaGaDown.yml
-flatpak run dev.gagadown.GaGaDown
+  target/flatpak-build packaging/flatpak/io.github.shuakami.GaGaDown.yml
+flatpak run io.github.shuakami.GaGaDown
 ```
 
 上述命令需要已配置名为 `flathub` 的远程源以安装构建依赖。当前 manifest 使用 Freedesktop `25.08`，固定到 `v0.1.7` 的源码归档并应用 `gagadown-linux.patch`；更新源码 tag 时，也要同步检查 SHA-256、补丁和 `cargo-sources.json`。
@@ -102,14 +102,14 @@ bash tools/package.sh
 
 ## Known issue
 
-在 Linux 上（原生包和 Flatpak 均有报告），主窗口留在当前工作区前台时，下载进度小窗通常响应正常。将主窗口移到其他工作区后，小窗可能出现数秒的交互延迟；主窗口退到托盘后，小窗可能无响应，恢复主窗口时也可能出现透明且不可交互的窗口。此时下载仍可能继续。根因待排查。
+Linux 曾有两类小窗卡顿，均已修复：主窗口位于不可见工作区时 vsync 呈现阻塞（改为优先 Mailbox/Immediate 并按显示器刷新率限帧），以及主窗口隐藏到托盘后隐藏窗口重绘饿死事件循环（改为隐藏窗口延迟绘制）。Linux 版本默认走 X11/XWayland（原生 Wayland 无法可靠实现关闭到托盘），调试原生 Wayland 可用 `GAGADOWN_FORCE_WAYLAND=1`。
 
 诊断默认关闭。使用包含诊断代码的构建复现时，先正常退出已有实例，再按需开启。日志与普通应用输出分离，写入数据目录的 `ui-debug.log`；每次启用时会重新创建该日志文件：
 
 ```bash
 # Flatpak
-flatpak run --env=GAGADOWN_UI_TRACE=1 dev.gagadown.GaGaDown
-# Flatpak 日志位于 ~/.var/app/dev.gagadown.GaGaDown/data/gagadown/ui-debug.log
+flatpak run --env=GAGADOWN_UI_TRACE=1 io.github.shuakami.GaGaDown
+# Flatpak 日志位于 ~/.var/app/io.github.shuakami.GaGaDown/data/gagadown/ui-debug.log
 # 本地构建（Linux 默认即 X11/XWayland；调试原生 Wayland 可加 GAGADOWN_FORCE_WAYLAND=1）
 GAGADOWN_UI_TRACE=1 ./target/release/GagaDown
 # 本地日志位于 $XDG_DATA_HOME/gagadown/ui-debug.log（通常为 ~/.local/share/gagadown/ui-debug.log）

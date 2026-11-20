@@ -1905,7 +1905,7 @@ impl GaGaTray {
 
 #[cfg(target_os = "linux")]
 impl ksni::Tray for GaGaTray {
-    fn id(&self) -> String { "dev.gagadown.GaGaDown".into() }
+    fn id(&self) -> String { "io.github.shuakami.GaGaDown".into() }
     fn title(&self) -> String { "GaGaDown".into() }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> { vec![self.icon.clone()] }
     fn activate(&mut self, _x: i32, _y: i32) { self.show_window(); }
@@ -3776,7 +3776,7 @@ impl App {
                 .with_decorations(false)
                 .with_resizable(false)
                 .with_always_on_top()
-                .with_app_id("dev.gagadown.GaGaDown")
+                .with_app_id("io.github.shuakami.GaGaDown")
                 .with_icon(self.icon.clone());
             let mut close = false;
             ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("popup", pop.key)), builder, |ui, _| {
@@ -4198,7 +4198,7 @@ fn main() -> eframe::Result {
     let mut opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("GaGaDown")
-            .with_app_id("dev.gagadown.GaGaDown")
+            .with_app_id("io.github.shuakami.GaGaDown")
             .with_inner_size([1120.0, 720.0])
             .with_min_inner_size([760.0, 480.0])
             .with_decorations(false)
