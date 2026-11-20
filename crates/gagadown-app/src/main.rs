@@ -656,26 +656,8 @@ fn route_info(v: &TaskView) -> (Option<String>, Option<u64>) {
     (v.route.clone(), v.route_latency_ms)
 }
 
-fn lang_pref_label(pref: LangPref) -> &'static str {
-    match pref {
-        LangPref::Auto => tr("跟随系统"),
-        LangPref::Zh => "简体中文",
-        LangPref::En => "English",
-    }
-}
-
 fn lang_options() -> [(LangPref, &'static str); 3] {
     [(LangPref::Auto, tr("跟随系统")), (LangPref::Zh, "简体中文"), (LangPref::En, "English")]
-}
-
-#[cfg(target_os = "linux")]
-fn backend_label(b: gagadown_core::config::DisplayBackend) -> &'static str {
-    use gagadown_core::config::DisplayBackend as B;
-    match b {
-        B::Auto => tr("跟随系统"),
-        B::Wayland => "Wayland",
-        B::X11 => "X11 (XWayland)",
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1412,9 +1394,10 @@ fn caret_tri(pt: &Painter, c: Pos2, angle: f32, col: Color32) {
 /// Fused dropdown: closed it is a plain rounded button; expanded it paints the
 /// button and the item list as one continuous rounded block in the foreground
 /// layer (shared border, inner divider), and the caret flips.
-fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<LangPref> {
+fn fused_picker<T: Copy + PartialEq>(ui: &mut Ui, r: Rect, id: Id, cur: T, options: &[(T, &'static str)], p: &Pal) -> Option<T> {
     const ROW: f32 = 30.0;
     const PAD: f32 = 4.0;
+    let cur_label = options.iter().find(|(v, _)| *v == cur).map(|(_, l)| *l).unwrap_or("");
     let ctx = ui.ctx().clone();
     let key = id.with("open");
     let mut open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, false));
@@ -1423,7 +1406,7 @@ fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<L
         open = !open;
         ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = open);
     }
-    let union = Rect::from_min_size(r.min, vec2(r.width(), r.height() + PAD + ROW * 3.0 + PAD));
+    let union = Rect::from_min_size(r.min, vec2(r.width(), r.height() + PAD + ROW * options.len() as f32 + PAD));
     let t = ctx.animate_bool_with_time(key.with("t"), open, 0.18);
     let rot = std::f32::consts::PI * egui::emath::easing::cubic_out(t);
     let hover_pos = ctx.input(|i| i.pointer.hover_pos());
@@ -1435,7 +1418,7 @@ fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<L
         ui.painter().rect(r, CornerRadius::same(8), p.input, Stroke::new(1.0, p.line), StrokeKind::Inside);
         ui.painter().rect_filled(r, CornerRadius::same(8), tint);
     }
-    ui.painter().text(pos2(r.left() + PAD + 10.0, r.center().y), Align2::LEFT_CENTER, lang_pref_label(cur), font(12.5), p.text);
+    ui.painter().text(pos2(r.left() + PAD + 10.0, r.center().y), Align2::LEFT_CENTER, cur_label, font(12.5), p.text);
     caret_tri(ui.painter(), pos2(r.right() - PAD - 17.0, r.center().y), rot, p.weak);
     // The overlay Area is shown every frame (empty while closed) so it never
     // "becomes visible": egui would otherwise fade it in from transparent and
@@ -1453,7 +1436,7 @@ fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<L
         if ui.interact(btn_r, id.with("b2"), Sense::click()).clicked() {
             ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = false);
         }
-        ui.painter().text(pos2(btn_r.left() + PAD + 10.0, btn_r.center().y), Align2::LEFT_CENTER, lang_pref_label(cur), font(12.5), p.text);
+        ui.painter().text(pos2(btn_r.left() + PAD + 10.0, btn_r.center().y), Align2::LEFT_CENTER, cur_label, font(12.5), p.text);
         caret_tri(ui.painter(), pos2(btn_r.right() - PAD - 17.0, btn_r.center().y), rot, p.weak);
         ui.painter().hline(btn_r.left()..=btn_r.right(), btn_r.bottom(), Stroke::new(1.0, p.line));
         let inner = Rect::from_min_max(pos2(union.left() + PAD, btn_r.bottom() + PAD), pos2(union.right() - PAD, union.bottom() - PAD));
@@ -1461,9 +1444,9 @@ fn lang_picker(ui: &mut Ui, r: Rect, id: Id, cur: LangPref, p: &Pal) -> Option<L
         child.set_clip_rect(inner.intersect(shown));
         child.spacing_mut().item_spacing.y = 1.0;
         let mut pick = None;
-        for (pref, label) in lang_options() {
-            if menu_choice(&mut child, label, cur == pref, p) {
-                pick = Some(pref);
+        for &(v, label) in options {
+            if menu_choice(&mut child, label, cur == v, p) {
+                pick = Some(v);
             }
         }
         pick
@@ -2811,7 +2794,7 @@ impl App {
         );
 
         let lr = Rect::from_min_size(pos2(bounds.right() - 156.0, bounds.top() + 16.0), vec2(140.0, 30.0));
-        if let Some(pref) = lang_picker(ui, lr, Id::new("welcome_lang"), self.draft.language, p) {
+        if let Some(pref) = fused_picker(ui, lr, Id::new("welcome_lang"), self.draft.language, &lang_options(), p) {
             self.set_language(pref);
         }
     }
@@ -3576,22 +3559,17 @@ impl App {
                         });
                         srow(ui, p, first, tr("语言"), tr("界面语言；跟随系统按系统语言显示"), 52.0, |ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(160.0, 30.0), Sense::hover());
-                            if let Some(pref) = lang_picker(ui, r, Id::new("lang"), d.language, p) {
+                            if let Some(pref) = fused_picker(ui, r, Id::new("lang"), d.language, &lang_options(), p) {
                                 d.language = pref;
                                 lang::set_pref(pref);
                             }
                         });
                         #[cfg(target_os = "linux")]
                         srow(ui, p, first, tr("显示后端"), tr("Linux 使用的显示服务器，更改后自动重启生效"), 56.0, |ui| {
-                            egui::ComboBox::from_id_salt("backend").width(160.0).selected_text(backend_label(d.display_backend)).show_ui(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for (b, label) in backend_options() {
-                                    if menu_choice(ui, label, d.display_backend == b, p) {
-                                        d.display_backend = b;
-                                        ui.close();
-                                    }
-                                }
-                            });
+                            let (r, _) = ui.allocate_exact_size(vec2(160.0, 30.0), Sense::hover());
+                            if let Some(b) = fused_picker(ui, r, Id::new("backend"), d.display_backend, &backend_options(), p) {
+                                d.display_backend = b;
+                            }
                         });
                     });
                     group(ui, p, tr("下载"), |ui, first| {
