@@ -119,6 +119,9 @@ fn en(zh: &'static str) -> &'static str {
         "本机代理 {0}" => "Local proxy {0}",
         "环境变量代理 {0}" => "Env proxy {0}",
         "系统代理" => "System proxy",
+        "跟随系统" => "Follow system",
+        "显示后端" => "Display backend",
+        "Linux 使用的显示服务器，更改后自动重启生效" => "Display server used on Linux; the app restarts automatically to apply",
         "没有可用线路（仅代理模式但未配置或探测到代理）" => "No route available (proxy-only mode with no proxy configured or detected)",
         "没有可用线路" => "No route available",
         // api.rs — browser hand-off messages

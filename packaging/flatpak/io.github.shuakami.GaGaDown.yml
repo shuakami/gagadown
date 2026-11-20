@@ -35,7 +35,7 @@ modules:
         url: https://github.com/shuakami/gagadown/archive/refs/tags/v0.1.7.tar.gz
         sha256: 6ac6119c596c200583152a7a0c9bdc89bede53eb9151062289c035b662935616
         # Flathub 的 external-data-checker 据此自动跟上游 release 开更新 PR；
-        # 本地构建忽略该字段。随 tarball 带到 Flathub 仓库的提交版 manifest 里也靠它。
+        # 本地构建忽略该字段。
         x-checker-data:
           type: json
           url: https://api.github.com/repos/shuakami/gagadown/releases/latest

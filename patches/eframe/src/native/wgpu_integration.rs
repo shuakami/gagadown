@@ -681,8 +681,11 @@ impl WgpuWinitRunning<'_> {
             // looked visible here. Presenting to a hidden window stalls in `get_current_texture`
             // (DXGI frame-latency wait / Vulkan acquire), freezing the whole event loop.
             // The root starts hidden and is only shown after its first paint, so that one must run.
-            let is_visible = integration.is_first_frame()
-                || (viewport.info.visible().unwrap_or(true) && !is_invisible_or_minimized(window));
+            // KEEP_ROOT_HIDDEN: root never paints, so its surface never maps (Wayland).
+            let is_visible = (integration.is_first_frame()
+                || (viewport.info.visible().unwrap_or(true) && !is_invisible_or_minimized(window)))
+                && !(viewport_id == ViewportId::ROOT
+                    && crate::KEEP_ROOT_HIDDEN.load(std::sync::atomic::Ordering::Relaxed));
 
             {
                 profiling::scope!("set_window");
@@ -882,6 +885,12 @@ impl WgpuWinitRunning<'_> {
 
             vsync_secs
         } else {
+            // The accumulated deltas are still needed: immediate child viewports
+            // paint with only their own delta, so textures referenced there must
+            // already be uploaded. Apply them without presenting.
+            if !pending_deltas.set.is_empty() || !pending_deltas.free.is_empty() {
+                painter.update_textures(pending_deltas);
+            }
             0.0
         };
 

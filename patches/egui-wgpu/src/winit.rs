@@ -847,6 +847,28 @@ impl Painter {
         vsync_sec
     }
 
+    /// Apply pending texture updates without painting. Needed when a viewport's
+    /// paint is skipped (e.g. a permanently unmapped root): its accumulated
+    /// `textures_delta` would otherwise go stale, and a later-painting child
+    /// viewport could hit "texture not allocated" for ids whose upload still
+    /// sits in the parent's pending deltas.
+    pub fn update_textures(&mut self, textures_delta: &mut epaint::textures::TexturesDelta) {
+        let Some(render_state) = self.render_state.as_mut() else {
+            return;
+        };
+        let mut renderer = render_state.renderer.write();
+        #[expect(clippy::iter_over_hash_type)] // Order doesn't matter here
+        for (id, image_deltas) in textures_delta.set.drain() {
+            for image_delta in image_deltas {
+                renderer.update_texture(&render_state.device, &render_state.queue, id, &image_delta);
+            }
+        }
+        #[expect(clippy::iter_over_hash_type)] // Order doesn't matter here
+        for id in textures_delta.free.drain() {
+            renderer.free_texture(&id);
+        }
+    }
+
     /// Call this at the beginning of each frame to receive the requested screenshots.
     pub fn handle_screenshots(&self, events: &mut Vec<Event>) {
         for (viewport_id, user_data, screenshot) in self.capture_rx.try_iter() {

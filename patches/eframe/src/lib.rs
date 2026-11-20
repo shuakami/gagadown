@@ -170,6 +170,11 @@ pub static KEEP_ROOT_UI: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 /// When set before `run_native`, the root window stays hidden after its first paint (start in tray).
 pub static START_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// When set, the root window is never painted or shown at all: the app renders its UI
+/// into child viewports instead. Needed on Wayland, where a mapped window cannot be
+/// unmapped, so hide-to-tray has to destroy and recreate a destroyable window.
+pub static KEEP_ROOT_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Breadcrumbs for diagnosing UI-thread stalls: which stage the event loop is currently in.
 pub mod stall {
     #![allow(missing_docs)]

@@ -31,6 +31,46 @@ const PAGE_EXIT_END: f32 = 0.55;
 const PAGE_ENTER_START: f32 = 0.32;
 const NAV_INDICATOR_HEIGHT: f32 = 48.0;
 const NAV_INDICATOR_SECS: f32 = 0.28;
+
+/// Wayland can't unmap a mapped window or un-minimize one, so the hide/show
+/// tray commands differ from X11. Set from the chosen winit backend at startup.
+static IS_WAYLAND: AtomicBool = AtomicBool::new(false);
+
+/// The main window lives in this child viewport on Wayland: hiding it means
+/// destroying the window entirely (true hide-to-tray), and the never-mapped
+/// root viewport only hosts the event loop.
+#[cfg(target_os = "linux")]
+fn main_viewport() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("gagadown-main")
+}
+
+/// Hide the main window to the tray. On Wayland the caller's `hidden` flag is
+/// enough: the next pass stops showing the child viewport and its window is
+/// destroyed. On X11 the root window is withdrawn.
+fn hide_main_window(ctx: &egui::Context) {
+    if IS_WAYLAND.load(Ordering::Relaxed) {
+        ctx.request_repaint();
+    } else {
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+    }
+}
+
+/// Bring the main window back from the tray. On Wayland the window is simply
+/// recreated by the next pass; an activation request covers the case where it
+/// still exists but is minimized (the compositor may only set a hint).
+fn show_main_window(ctx: &egui::Context) {
+    if IS_WAYLAND.load(Ordering::Relaxed) {
+        ctx.send_viewport_cmd_to(
+            main_viewport(),
+            ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical),
+        );
+    } else {
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+    }
+}
+
 #[cfg(debug_assertions)]
 const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
 #[cfg(not(debug_assertions))]
@@ -382,6 +422,11 @@ struct App {
     tray: Option<Box<dyn std::any::Any>>,
     quit: Arc<AtomicBool>,
     hidden: Arc<AtomicBool>,
+    /// Last seen geometry of the main window, restored when its Wayland child
+    /// viewport is recreated after a tray-hide cycle.
+    main_size: Option<[f32; 2]>,
+    main_pos: Option<Pos2>,
+    main_maximized: Option<bool>,
 }
 
 /// A download popup: `task` is set once the hand-off probe accepted the link.
@@ -621,6 +666,22 @@ fn lang_pref_label(pref: LangPref) -> &'static str {
 
 fn lang_options() -> [(LangPref, &'static str); 3] {
     [(LangPref::Auto, tr("跟随系统")), (LangPref::Zh, "简体中文"), (LangPref::En, "English")]
+}
+
+#[cfg(target_os = "linux")]
+fn backend_label(b: gagadown_core::config::DisplayBackend) -> &'static str {
+    use gagadown_core::config::DisplayBackend as B;
+    match b {
+        B::Auto => tr("跟随系统"),
+        B::Wayland => "Wayland",
+        B::X11 => "X11 (XWayland)",
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn backend_options() -> [(gagadown_core::config::DisplayBackend, &'static str); 2] {
+    use gagadown_core::config::DisplayBackend as B;
+    [(B::X11, "X11 (XWayland)"), (B::Wayland, "Wayland")]
 }
 
 const EXTENSION: &[(&str, &[u8])] = &[
@@ -1483,9 +1544,7 @@ mod win {
             let ctx = ctx.clone();
             move || {
                 hidden.store(false, Ordering::SeqCst);
-                ctx.send_viewport_cmd(V::Visible(true));
-                ctx.send_viewport_cmd(V::Minimized(false));
-                ctx.send_viewport_cmd(V::Focus);
+                crate::show_main_window(&ctx);
                 ctx.request_repaint();
             }
         };
@@ -1905,11 +1964,8 @@ struct GaGaTray {
 #[cfg(target_os = "linux")]
 impl GaGaTray {
     fn show_window(&self) {
-        use eframe::egui::ViewportCommand as V;
         self.hidden.store(false, std::sync::atomic::Ordering::SeqCst);
-        self.ctx.send_viewport_cmd(V::Visible(true));
-        self.ctx.send_viewport_cmd(V::Minimized(false));
-        self.ctx.send_viewport_cmd(V::Focus);
+        crate::show_main_window(&self.ctx);
         self.ctx.request_repaint();
     }
 }
@@ -2102,6 +2158,9 @@ impl App {
             tray: None,
             quit: Arc::new(AtomicBool::new(false)),
             hidden: Arc::new(AtomicBool::new(false)),
+            main_size: None,
+            main_pos: None,
+            main_maximized: None,
         }
     }
 
@@ -2383,7 +2442,7 @@ impl App {
         if chrome_btn(ui, close, Glyph::Close, p) {
             if self.tray.is_some() {
                 self.hidden.store(true, Ordering::SeqCst);
-                ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+                hide_main_window(&ctx);
             } else {
                 ctx.send_viewport_cmd(ViewportCommand::Close);
             }
@@ -2700,6 +2759,29 @@ impl App {
         }
         self.draft.language = pref;
         lang::set_pref(pref);
+    }
+
+    /// Linux 显示后端在窗口创建时就确定了，改设置 = 存盘后拉起新进程再退出本进程。
+    /// 新进程用 `--restart-after <pid>` 等本进程退出（单实例锁随之释放）。
+    #[cfg(target_os = "linux")]
+    fn apply_backend_restart(&mut self) {
+        if self.draft.display_backend == self.engine.settings().display_backend {
+            return;
+        }
+        let mut cand = self.draft.clone();
+        cand.proxy.proxies = self.draft_proxies.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        if let Err(e) = self.engine.set_settings(cand) {
+            self.toast(format!("{e}"), true);
+            self.draft = self.engine.settings();
+            return;
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = std::process::Command::new(exe)
+                .arg("--restart-after")
+                .arg(std::process::id().to_string())
+                .spawn();
+        }
+        std::process::exit(0);
     }
 
     fn section(&mut self, ui: &mut Ui, sec: Sec, items: &[TaskView], p: &Pal) {
@@ -3436,6 +3518,18 @@ impl App {
                                 }
                             });
                         });
+                        #[cfg(target_os = "linux")]
+                        srow(ui, p, first, tr("显示后端"), tr("Linux 使用的显示服务器，更改后自动重启生效"), 56.0, |ui| {
+                            egui::ComboBox::from_id_salt("backend").width(160.0).selected_text(backend_label(d.display_backend)).show_ui(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                for (b, label) in backend_options() {
+                                    if menu_choice(ui, label, d.display_backend == b, p) {
+                                        d.display_backend = b;
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        });
                     });
                     group(ui, p, tr("下载"), |ui, first| {
                         srow(ui, p, first, tr("下载目录"), "", 52.0, |ui| {
@@ -3568,6 +3662,8 @@ impl App {
                 self.draft_proxies = self.draft.proxy.proxies.join("\n");
             }
         }
+        #[cfg(target_os = "linux")]
+        self.apply_backend_restart();
         ctx.request_repaint_after(Duration::from_millis(200));
     }
 
@@ -3906,9 +4002,7 @@ impl App {
     fn show_in_main(&mut self, ctx: &egui::Context, id: Uuid) {
         self.selected = Some(id);
         self.hidden.store(false, Ordering::SeqCst);
-        for c in [ViewportCommand::Visible(true), ViewportCommand::Minimized(false), ViewportCommand::Focus] {
-            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, c);
-        }
+        show_main_window(ctx);
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
@@ -4080,15 +4174,76 @@ impl eframe::App for App {
                 apply_style(&ctx, a);
             }
         }
-        if self.tray.is_some() && !self.quit.load(Ordering::SeqCst) && ctx.input(|i| i.viewport().close_requested()) {
-            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
-            self.hidden.store(true, Ordering::SeqCst);
-        }
         self.refresh();
         #[cfg(windows)]
         win::DARK_TEXT.store(ui.visuals().dark_mode, std::sync::atomic::Ordering::Relaxed);
         let p = Pal::new(ui.visuals().dark_mode, self.accent);
+        if self.engine.take_show_request() {
+            self.hidden.store(false, Ordering::SeqCst);
+            show_main_window(&ctx);
+        }
+        self.popups(&ctx, &p);
+        #[cfg(target_os = "linux")]
+        if IS_WAYLAND.load(Ordering::Relaxed) {
+            self.ui_wayland(ui);
+        } else {
+            self.ui_main(ui);
+        }
+        #[cfg(not(target_os = "linux"))]
+        self.ui_main(ui);
+        let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued)) || self.engine.is_detecting();
+        ctx.request_repaint_after(Duration::from_millis(if busy { 250 } else { 1000 }));
+    }
+
+    fn on_exit(&mut self) {
+        let e = self.engine.clone();
+        self.rt.block_on(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(3), e.shutdown()).await;
+        });
+    }
+}
+
+impl App {
+    /// Root pass on Wayland: the root window is never mapped (it only hosts the
+    /// event loop), so the main window lives in an immediate child viewport.
+    /// That viewport can be destroyed for a real hide-to-tray and recreated on
+    /// demand - the only way to fully unmap a window under Wayland.
+    #[cfg(target_os = "linux")]
+    fn ui_wayland(&mut self, ui: &mut Ui) {
+        if self.hidden.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut builder = egui::ViewportBuilder::default()
+            .with_title("GaGaDown")
+            .with_app_id("io.github.shuakami.GaGaDown")
+            .with_inner_size(self.main_size.unwrap_or([1120.0, 720.0]))
+            .with_min_inner_size([760.0, 480.0])
+            .with_decorations(false)
+            .with_icon(self.icon.clone());
+        if let Some(pos) = self.main_pos {
+            builder = builder.with_position(pos);
+        }
+        if self.main_maximized == Some(true) {
+            builder = builder.with_maximized(true);
+        }
+        ui.ctx().show_viewport_immediate(main_viewport(), builder, |ui2, _| self.ui_main(ui2));
+    }
+
+    /// The main window's contents. On X11/Windows this is the root viewport's
+    /// pass; on Wayland it runs inside the child viewport from `ui_wayland`.
+    fn ui_main(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let p = Pal::new(ui.visuals().dark_mode, self.accent);
+        if self.tray.is_some() && !self.quit.load(Ordering::SeqCst) && ctx.input(|i| i.viewport().close_requested()) {
+            // On Wayland the close is let through: the child viewport being
+            // destroyed is what fully unmaps the window, and `hidden` keeps it
+            // from being recreated.
+            if !IS_WAYLAND.load(Ordering::Relaxed) {
+                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                hide_main_window(&ctx);
+            }
+            self.hidden.store(true, Ordering::SeqCst);
+        }
         let full = ui.max_rect();
 
         if !ctx.egui_wants_keyboard_input() {
@@ -4156,23 +4311,25 @@ impl eframe::App for App {
         self.remove_modal(&ctx, &p);
         self.error_modal(&ctx, &p);
         self.show_toasts(&ctx, &p);
-        if self.engine.take_show_request() {
-            self.hidden.store(false, Ordering::SeqCst);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
-        self.popups(&ctx, &p);
         resize_edges(&ctx, full);
-        let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued)) || self.engine.is_detecting();
-        ctx.request_repaint_after(Duration::from_millis(if busy { 250 } else { 1000 }));
+        #[cfg(target_os = "linux")]
+        self.track_main_geometry(&ctx);
     }
 
-    fn on_exit(&mut self) {
-        let e = self.engine.clone();
-        self.rt.block_on(async move {
-            let _ = tokio::time::timeout(Duration::from_secs(3), e.shutdown()).await;
+    /// Remember the main window's geometry so the next recreation on Wayland
+    /// (where tray-hide destroys the viewport) can restore it.
+    #[cfg(target_os = "linux")]
+    fn track_main_geometry(&mut self, ctx: &egui::Context) {
+        if !IS_WAYLAND.load(Ordering::Relaxed) {
+            return;
+        }
+        let (inner, outer, maximized) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.inner_rect, v.outer_rect, v.maximized)
         });
+        self.main_size = inner.map(|r| [r.width(), r.height()]);
+        self.main_pos = outer.map(|r| r.min);
+        self.main_maximized = maximized;
     }
 }
 
@@ -4209,6 +4366,24 @@ fn main() -> eframe::Result {
     // UI-thread calls into the engine may spawn tokio tasks.
     let rt_handle = rt.handle().clone();
     let _rt_guard = rt_handle.enter();
+    // `--restart-after <pid>`: the settings page spawns a replacement process
+    // after a backend change; wait for the old process to exit so the
+    // single-instance lock and display connection are released first.
+    #[cfg(target_os = "linux")]
+    {
+        let mut args = std::env::args();
+        while let Some(a) = args.next() {
+            if a == "--restart-after" {
+                if let Some(pid) = args.next().and_then(|v| v.parse::<u32>().ok()) {
+                    let proc = format!("/proc/{pid}");
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    while std::path::Path::new(&proc).exists() && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                }
+            }
+        }
+    }
     let engine = {
         let _g = rt.enter();
         Engine::new(None)
@@ -4259,16 +4434,40 @@ fn main() -> eframe::Result {
         centered: true,
         ..Default::default()
     };
-    // Wayland can't unmap a window, so close-to-tray (Visible(false)) only works
-    // under X11/XWayland. Default to it for tray support (DISPLAY is always set
-    // when XWayland is available); GAGADOWN_FORCE_WAYLAND opts back into the
-    // Wayland backend for debugging.
+    // On Linux the display backend comes from the user's setting (`Auto` follows
+    // the session type); GAGADOWN_FORCE_X11 / GAGADOWN_FORCE_WAYLAND override it
+    // for debugging. On Wayland a mapped window cannot be unmapped, so the root
+    // window stays hidden (KEEP_ROOT_HIDDEN) and the main window is a child
+    // viewport that hide-to-tray destroys and recreates.
     #[cfg(target_os = "linux")]
-    if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_none() && std::env::var_os("DISPLAY").is_some() {
-        use winit::platform::x11::EventLoopBuilderExtX11;
-        opts.event_loop_builder = Some(Box::new(|builder| {
-            builder.with_x11();
-        }));
+    {
+        use gagadown_core::config::DisplayBackend as Backend;
+        let backend = if std::env::var_os("GAGADOWN_FORCE_X11").is_some() {
+            Backend::X11
+        } else if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_some() {
+            Backend::Wayland
+        } else {
+            st.display_backend
+        };
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+            && matches!(backend, Backend::Wayland | Backend::Auto);
+        IS_WAYLAND.store(wayland, Ordering::Relaxed);
+        eframe::KEEP_ROOT_HIDDEN.store(wayland, Ordering::Relaxed);
+        match backend {
+            Backend::Wayland if wayland => {
+                use winit::platform::wayland::EventLoopBuilderExtWayland;
+                opts.event_loop_builder = Some(Box::new(|builder| {
+                    builder.with_wayland();
+                }));
+            }
+            Backend::X11 => {
+                use winit::platform::x11::EventLoopBuilderExtX11;
+                opts.event_loop_builder = Some(Box::new(|builder| {
+                    builder.with_x11();
+                }));
+            }
+            _ => {}
+        }
     }
     #[cfg(windows)]
     eframe::epaint::text::set_glyph_rasterizer(win::gdi_glyph);
@@ -4280,6 +4479,7 @@ fn main() -> eframe::Result {
             apply_style(&cc.egui_ctx, accent);
             let mut app = App::new(rt, engine.clone(), api_error, icon, accent);
             app.tray = win::tray(cc.egui_ctx.clone(), tray_rgba(), app.quit.clone(), app.hidden.clone());
+            // On Wayland a silent start simply never creates the main viewport.
             app.hidden.store(silent, Ordering::SeqCst);
             let _ = unpack_extension(engine.data_dir());
             // Keep the UI pass running while minimized or in the tray so hand-off popups still open.
