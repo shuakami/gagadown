@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 mod strings;
+mod update;
 
 use crate::strings::{tr, trf};
 
@@ -427,6 +428,7 @@ struct App {
     main_size: Option<[f32; 2]>,
     main_pos: Option<Pos2>,
     main_maximized: Option<bool>,
+    update: update::State,
 }
 
 /// A download popup: `task` is set once the hand-off probe accepted the link.
@@ -2200,6 +2202,7 @@ impl App {
             remove_mode: RemoveMode::TrashFiles,
             draft,
             draft_proxies,
+            update: update::new_state(),
             cache: None,
             toasts: Vec::new(),
             handoff_fails: Vec::new(),
@@ -2833,6 +2836,31 @@ impl App {
                 .spawn();
         }
         std::process::exit(0);
+    }
+
+    /// 更新器入口，按 update::Stage 推进：未在跑 → 检查；Found → 自装（不支持
+    /// 的环境打开发布页）；Installed → 重启进新版。
+    fn start_update(&mut self) {
+        let stage = self.update.lock().clone();
+        match stage {
+            update::Stage::Idle | update::Stage::UpToDate | update::Stage::Failed(_) => {
+                let st = self.update.clone();
+                self.rt.spawn(async move { update::check(&st).await });
+            }
+            update::Stage::Found(tag, url) => {
+                if update::can_self_install() {
+                    let st = self.update.clone();
+                    let dir = self.engine.data_dir().to_path_buf();
+                    self.rt.spawn(async move { update::apply(&st, tag, url, dir).await });
+                } else {
+                    open_path(Path::new(&url));
+                    *self.update.lock() = update::Stage::Idle;
+                }
+            }
+            #[cfg(target_os = "linux")]
+            update::Stage::Installed => update::restart(),
+            _ => {}
+        }
     }
 
     fn section(&mut self, ui: &mut Ui, sec: Sec, items: &[TaskView], p: &Pal) {
@@ -3535,6 +3563,37 @@ impl App {
             }
             lx = lr.right() + 18.0;
         }
+        // 更新链接 + 状态：同一行续排，文案随 update::Stage 变化。
+        let stage = self.update.lock().clone();
+        let ulabel = match &stage {
+            update::Stage::Installed => tr("重启"),
+            update::Stage::Found(..) if update::can_self_install() => tr("更新"),
+            update::Stage::Found(..) => tr("去下载"),
+            _ => tr("检查更新"),
+        };
+        let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, ulabel, font(12.5), p.accent, w);
+        let resp = ui.interact(lr.expand(3.0), Id::new("about_update"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+        if resp.hovered() {
+            pt.hline(lr.x_range(), lr.bottom() + 1.0, Stroke::new(1.0, p.accent.gamma_multiply(0.6)));
+        }
+        if resp.clicked() {
+            self.start_update();
+        }
+        lx = lr.right() + 18.0;
+        let (stext, scol) = match &stage {
+            update::Stage::Checking => (tr("正在检查…").into(), p.weak),
+            update::Stage::UpToDate => (tr("已是最新").into(), p.weak),
+            update::Stage::Found(tag, _) => (trf("发现新版本 {}", &[tag]), p.accent),
+            update::Stage::Downloading(pct) => (trf("正在下载… {}%", &[pct]), p.accent),
+            update::Stage::Installing => (tr("正在安装…").into(), p.accent),
+            update::Stage::Installed => (tr("已安装，重启完成更新").into(), p.green),
+            update::Stage::Failed(e) => (trf("更新失败：{}", &[e]), p.red),
+            update::Stage::Idle => (String::new(), p.weak),
+        };
+        if !stext.is_empty() {
+            text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, stext, font(12.0), scol, r.right() - lx - 8.0);
+        }
+
         let done = self.views.iter().filter(|v| v.status == Status::Completed);
         let (n, total) = done.fold((0usize, 0u64), |(n, t), v| (n + 1, t + v.size.unwrap_or(0)));
         pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, trf("已完成 {} 个下载，共 {}", &[&n, &bytes(total)]), font(12.0), p.weak);
