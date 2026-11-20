@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 991335a..620a4d8 100644
+index 991335a..0213bdc 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -166,6 +166,15 @@ dependencies = [
@@ -71,7 +71,15 @@ index 991335a..620a4d8 100644
   "winreg 0.56.0",
  ]
  
-@@ -2549,6 +2583,26 @@ version = "3.1.0"
+@@ -1616,6 +1650,7 @@ dependencies = [
+  "serde_json",
+  "sha2 0.11.0",
+  "subtle",
++ "sys-locale",
+  "tempfile",
+  "thiserror 2.0.21",
+  "tokio",
+@@ -2549,6 +2584,26 @@ version = "3.1.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
  
@@ -98,7 +106,7 @@ index 991335a..620a4d8 100644
  [[package]]
  name = "kurbo"
  version = "0.13.1"
-@@ -3411,6 +3465,12 @@ dependencies = [
+@@ -3411,6 +3466,12 @@ dependencies = [
   "windows-link",
  ]
  
@@ -111,7 +119,7 @@ index 991335a..620a4d8 100644
  [[package]]
  name = "peniko"
  version = "0.6.1"
-@@ -4147,7 +4207,7 @@ dependencies = [
+@@ -4147,7 +4208,7 @@ dependencies = [
   "rand 0.8.8",
   "serde",
   "sha2 0.10.9",
@@ -120,7 +128,23 @@ index 991335a..620a4d8 100644
  ]
  
  [[package]]
-@@ -4611,6 +4671,15 @@ version = "0.12.16"
+@@ -4571,6 +4632,15 @@ dependencies = [
+  "syn 3.0.6",
+ ]
+ 
++[[package]]
++name = "sys-locale"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
++dependencies = [
++ "libc",
++]
++
+ [[package]]
+ name = "system-configuration"
+ version = "0.7.0"
+@@ -4611,6 +4681,15 @@ version = "0.12.16"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
  
@@ -136,7 +160,7 @@ index 991335a..620a4d8 100644
  [[package]]
  name = "tempfile"
  version = "3.27.0"
-@@ -6188,9 +6257,44 @@ dependencies = [
+@@ -6188,9 +6267,44 @@ dependencies = [
   "uds_windows",
   "windows-sys 0.52.0",
   "xdg-home",
@@ -184,7 +208,7 @@ index 991335a..620a4d8 100644
  ]
  
  [[package]]
-@@ -6203,7 +6307,22 @@ dependencies = [
+@@ -6203,7 +6317,22 @@ dependencies = [
   "proc-macro2",
   "quote",
   "syn 2.0.119",
@@ -208,7 +232,7 @@ index 991335a..620a4d8 100644
  ]
  
  [[package]]
-@@ -6214,7 +6333,27 @@ checksum = "4b9b1fef7d021261cc16cba64c351d291b715febe0fa10dc3a443ac5a5022e6c"
+@@ -6214,7 +6343,27 @@ checksum = "4b9b1fef7d021261cc16cba64c351d291b715febe0fa10dc3a443ac5a5022e6c"
  dependencies = [
   "serde",
   "static_assertions",
@@ -237,7 +261,7 @@ index 991335a..620a4d8 100644
  ]
  
  [[package]]
-@@ -6348,7 +6487,22 @@ dependencies = [
+@@ -6348,7 +6497,22 @@ dependencies = [
   "enumflags2",
   "serde",
   "static_assertions",
@@ -261,7 +285,7 @@ index 991335a..620a4d8 100644
  ]
  
  [[package]]
-@@ -6361,7 +6515,20 @@ dependencies = [
+@@ -6361,7 +6525,20 @@ dependencies = [
   "proc-macro2",
   "quote",
   "syn 2.0.119",
@@ -283,7 +307,7 @@ index 991335a..620a4d8 100644
  ]
  
  [[package]]
-@@ -6374,3 +6541,16 @@ dependencies = [
+@@ -6374,3 +6551,16 @@ dependencies = [
   "quote",
   "syn 2.0.119",
  ]
@@ -313,12 +337,17 @@ index a4a4364..a792b30 100644
 +ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 +winit = { version = "0.30.13", default-features = false, features = ["x11"] }
 diff --git a/crates/gagadown-app/src/main.rs b/crates/gagadown-app/src/main.rs
-index cbfba48..93d1864 100644
+index cbfba48..451482f 100644
 --- a/crates/gagadown-app/src/main.rs
 +++ b/crates/gagadown-app/src/main.rs
-@@ -18,13 +18,14 @@ use std::time::{Duration, Instant};
+@@ -17,14 +17,19 @@ use std::sync::Arc;
+ use std::time::{Duration, Instant};
  use uuid::Uuid;
  
++mod strings;
++
++use crate::strings::{tr, trf};
++
  static ICON: &[u8] = include_bytes!("../../../assets/icon_256.rgba");
 +static CJK_FONT: &[u8] = include_bytes!("../../../packaging/flatpak/NotoSansCJKsc-Regular.ttf");
  const DEFAULT_ACCENT: Color32 = Color32::from_rgb(0, 120, 212);
@@ -332,7 +361,7 @@ index cbfba48..93d1864 100644
  #[cfg(debug_assertions)]
  const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
  #[cfg(not(debug_assertions))]
-@@ -206,45 +207,27 @@ impl NavIndicator {
+@@ -206,45 +211,27 @@ impl NavIndicator {
      }
  
      fn sample(&mut self, now: Instant) -> (f32, f32, bool) {
@@ -393,7 +422,127 @@ index cbfba48..93d1864 100644
          };
          let y = (top + bottom) * 0.5;
          let height = bottom - top;
-@@ -640,10 +623,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
+@@ -313,7 +300,7 @@ impl MockDownloadPreview {
+         let speed = if running { Self::SIZE as f64 / Self::DURATION as f64 } else { 0.0 };
+         TaskView {
+             id: self.id,
+-            filename: format!("模拟下载 · {}.bin", self.label),
++            filename: trf("模拟下载 · {}.bin", &[&self.label]),
+             url: "mock://dev-preview/animation.bin".into(),
+             host: "dev-preview.local".into(),
+             dir: std::path::PathBuf::new(),
+@@ -331,6 +318,7 @@ impl MockDownloadPreview {
+             splits: 3,
+             history: Vec::new(),
+             route: Some("DEV MOCK".into()),
++            route_latency_ms: Some(12),
+             created_at: self.created_at,
+             finished_at: (progress >= 1.0).then_some(self.created_at + elapsed as u64),
+             next_retry_at: None,
+@@ -435,24 +423,24 @@ fn speed(s: f64) -> String {
+ 
+ fn dur(s: u64) -> String {
+     if s < 60 {
+-        format!("{s} 秒")
++        trf("{} 秒", &[&s])
+     } else if s < 3600 {
+-        format!("{} 分 {} 秒", s / 60, s % 60)
++        trf("{} 分 {} 秒", &[&(s / 60), &(s % 60)])
+     } else {
+-        format!("{} 小时 {} 分", s / 3600, s % 3600 / 60)
++        trf("{} 小时 {} 分", &[&(s / 3600), &(s % 3600 / 60)])
+     }
+ }
+ 
+ fn ago(ts: u64) -> String {
+     let d = now_secs().saturating_sub(ts);
+     if d < 60 {
+-        "刚刚".into()
++        tr("刚刚").into()
+     } else if d < 3600 {
+-        format!("{} 分钟前", d / 60)
++        trf("{} 分钟前", &[&(d / 60)])
+     } else if d < 86400 {
+-        format!("{} 小时前", d / 3600)
++        trf("{} 小时前", &[&(d / 3600)])
+     } else {
+-        format!("{} 天前", d / 86400)
++        trf("{} 天前", &[&(d / 86400)])
+     }
+ }
+ 
+@@ -465,30 +453,30 @@ fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError) -> String {
+     };
+     let scrub = |s: &str| s.replace(&v.url, &masked);
+     let mut s = String::new();
+-    let _ = writeln!(s, "文件    {}", v.filename);
+-    let _ = writeln!(s, "链接    {masked}");
+-    let _ = writeln!(s, "时间    {}", when(e.at));
+-    let _ = writeln!(s, "类型    {:?}", e.kind);
++    let _ = writeln!(s, "{}", trf("文件    {}", &[&v.filename]));
++    let _ = writeln!(s, "{}", trf("链接    {}", &[&masked]));
++    let _ = writeln!(s, "{}", trf("时间    {}", &[&when(e.at)]));
++    let _ = writeln!(s, "{}", trf("类型    {}", &[&format!("{:?}", e.kind)]));
+     if let Some(c) = e.status {
+-        let _ = writeln!(s, "状态码  HTTP {c}");
++        let _ = writeln!(s, "{}", trf("状态码  HTTP {}", &[&c]));
+     }
+-    let _ = writeln!(s, "原始信息  {}", scrub(&e.message));
++    let _ = writeln!(s, "{}", trf("原始信息  {}", &[&scrub(&e.message)]));
+     if !e.routes.is_empty() {
+-        s.push_str("\n各线路结果\n");
++        s.push_str(tr("\n各线路结果\n"));
+         for r in &e.routes {
+             match r.status {
+                 Some(c) => {
+                     let _ = writeln!(s, "  {}  HTTP {c}", r.route);
+                 }
+                 None => {
+-                    let why = gagadown_core::error::brief(&r.message).unwrap_or("无响应");
++                    let why = gagadown_core::error::brief(&r.message).unwrap_or(tr("无响应"));
+                     let _ = writeln!(s, "  {}  {why}\n    {}", r.route, scrub(&r.message));
+                 }
+             }
+         }
+     }
+     if !v.log.is_empty() {
+-        s.push_str("\n最近日志\n");
++        s.push_str(tr("\n最近日志\n"));
+         for l in v.log.iter().rev().take(12).rev() {
+             let _ = writeln!(s, "  {}  {}", when(l.at), scrub(&l.text));
+         }
+@@ -539,10 +527,10 @@ fn when(ts: u64) -> String {
+     let now = Local::now();
+     let days = now.date_naive().signed_duration_since(t.date_naive()).num_days();
+     match days {
+-        0 => t.format("今天 %H:%M").to_string(),
+-        1 => t.format("昨天 %H:%M").to_string(),
+-        _ if t.year() == now.year() => format!("{}月{}日 {}", t.month(), t.day(), t.format("%H:%M")),
+-        _ => format!("{}年{}月{}日", t.year(), t.month(), t.day()),
++        0 => t.format(tr("今天 %H:%M")).to_string(),
++        1 => t.format(tr("昨天 %H:%M")).to_string(),
++        _ if t.year() == now.year() => trf("{}月{}日 {}", &[&t.month(), &t.day(), &t.format("%H:%M")]),
++        _ => trf("{}年{}月{}日", &[&t.year(), &t.month(), &t.day()]),
+     }
+ }
+ 
+@@ -619,14 +607,7 @@ fn decode_png(b: &[u8]) -> Option<egui::ColorImage> {
+ }
+ 
+ fn route_info(v: &TaskView) -> (Option<String>, Option<u64>) {
+-    for l in v.log.iter().rev() {
+-        if let Some(rest) = l.text.strip_prefix("线路 ") {
+-            if let Some((name, ms)) = rest.split_once("，响应 ") {
+-                return (v.route.clone().or(Some(name.to_string())), ms.trim_end_matches(" ms").parse().ok());
+-            }
+-        }
+-    }
+-    (v.route.clone(), None)
++    (v.route.clone(), v.route_latency_ms)
+ }
+ 
+ const EXTENSION: &[(&str, &[u8])] = &[
+@@ -640,10 +621,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
      ("icons/128.png", include_bytes!("../../../extension/icons/128.png")),
  ];
  
@@ -406,7 +555,7 @@ index cbfba48..93d1864 100644
  
  struct ExtGuide {
      browser: usize,
-@@ -654,22 +635,35 @@ struct ExtGuide {
+@@ -654,22 +633,35 @@ struct ExtGuide {
  struct Browser {
      key: &'static str,
      name: &'static str,
@@ -454,7 +603,55 @@ index cbfba48..93d1864 100644
  }
  
  /// Writes the bundled extension into `<data>/extension`, touching only files that changed.
-@@ -1070,10 +1064,167 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
+@@ -817,36 +809,36 @@ fn of(v: &TaskView) -> String {
+ 
+ fn meta_line(v: &TaskView, p: &Pal) -> (String, Color32) {
+     match v.status {
+-        Status::Queued if v.downloaded > 0 => (format!("排队中   {}", of(v)), p.weak),
+-        Status::Queued => ("排队中".into(), p.weak),
+-        Status::Paused => (format!("已暂停   {}", of(v)), p.weak),
++        Status::Queued if v.downloaded > 0 => (trf("排队中   {}", &[&of(v)]), p.weak),
++        Status::Queued => (tr("排队中").into(), p.weak),
++        Status::Paused => (trf("已暂停   {}", &[&of(v)]), p.weak),
+         Status::Running => match v.phase {
+             Some(Phase::Downloading) | None => {
+                 let mut s = format!("{}   {}", of(v), speed(v.speed));
+                 if let Some(e) = v.eta_secs {
+-                    s += &format!("   剩余 {}", dur(e));
++                    s += &trf("   剩余 {}", &[&dur(e)]);
+                 }
+                 (s, p.weak)
+             }
+-            Some(Phase::Connecting) => ("连接中".into(), p.weak),
+-            Some(Phase::Finalizing) => ("写入中".into(), p.weak),
+-            Some(Phase::Verifying) => ("校验中".into(), p.weak),
++            Some(Phase::Connecting) => (tr("连接中").into(), p.weak),
++            Some(Phase::Finalizing) => (tr("写入中").into(), p.weak),
++            Some(Phase::Verifying) => (tr("校验中").into(), p.weak),
+         },
+-        Status::Completed if v.file_missing => ("文件已被移动或删除".into(), p.orange),
++        Status::Completed if v.file_missing => (tr("文件已被移动或删除").into(), p.orange),
+         Status::Completed => {
+             let mut s = v.size.map(bytes).unwrap_or_default();
+             if v.avg_speed > 0.0 {
+-                s += &format!("   平均 {}", speed(v.avg_speed));
++                s += &trf("   平均 {}", &[&speed(v.avg_speed)]);
+             }
+             (s, p.weak)
+         }
+         Status::Failed => {
+             let mut s = match &v.error {
+                 Some(e) => e.summary(),
+-                None => "失败".into(),
++                None => tr("失败").into(),
+             };
+             if let Some(t) = v.next_retry_at {
+-                s += &format!("，{} 后自动重试", dur(t.saturating_sub(now_secs())));
++                s += &trf("，{} 后自动重试", &[&dur(t.saturating_sub(now_secs()))]);
+             }
+             (s, p.red)
+         }
+@@ -1070,10 +1062,167 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
          clip.add(Shape::line(pts, Stroke::new(1.6, p.green)));
      }
      pt.text(r.right_top(), Align2::RIGHT_TOP, speed((max / 1.15) as f64), font(10.5), p.weak);
@@ -476,7 +673,7 @@ index cbfba48..93d1864 100644
 +            let tip = if ago == 0 {
 +                speed(data[i] as f64)
 +            } else {
-+                format!("{} · {} 秒前", speed(data[i] as f64), ago)
++                trf("{} · {} 秒前", &[&speed(data[i] as f64), &ago])
 +            };
 +            let tw = pt.layout_no_wrap(tip.clone(), font(11.5), p.text).size().x + 16.0;
 +            let mut tr = Rect::from_center_size(pos2(pos.x, r.top() + 12.0), vec2(tw, 22.0));
@@ -622,7 +819,7 @@ index cbfba48..93d1864 100644
      fn append(path: &Path, line: &str) {
          use std::io::Write;
          if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-@@ -1107,6 +1258,7 @@ fn install_diagnostics(dir: std::path::PathBuf) {
+@@ -1107,6 +1256,7 @@ fn install_diagnostics(dir: std::path::PathBuf) {
              if t > tier {
                  tier = t;
                  append(&freeze, &format!("[{}] 界面线程卡在「{}」已 {secs} 秒\n", now_secs(), eframe::stall::name(stage)));
@@ -630,7 +827,18 @@ index cbfba48..93d1864 100644
              }
          }
      });
-@@ -1604,14 +1756,6 @@ mod win {
+@@ -1305,8 +1455,8 @@ mod win {
+         use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+         use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+         let menu = Menu::new();
+-        let show = MenuItem::new("显示主界面", true, None);
+-        let exit = MenuItem::new("退出", true, None);
++        let show = MenuItem::new(crate::strings::tr("显示主界面"), true, None);
++        let exit = MenuItem::new(crate::strings::tr("退出"), true, None);
+         menu.append_items(&[&show, &PredefinedMenuItem::separator(), &exit]).ok()?;
+         let (show_id, exit_id) = (show.id().clone(), exit.id().clone());
+         let tray = TrayIconBuilder::new()
+@@ -1604,14 +1754,6 @@ mod win {
              .filter(|p| p.exists())
      }
  
@@ -645,7 +853,7 @@ index cbfba48..93d1864 100644
      pub fn set_autostart(on: bool) {
          let Ok((k, _)) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run") else {
              return;
-@@ -1701,14 +1845,31 @@ mod win {
+@@ -1701,14 +1843,31 @@ mod win {
          }
      }
  
@@ -681,7 +889,7 @@ index cbfba48..93d1864 100644
      pub fn tray(
          _ctx: eframe::egui::Context,
          _rgba: Vec<u8>,
-@@ -1722,6 +1883,46 @@ mod win {
+@@ -1722,6 +1881,46 @@ mod win {
      }
  }
  
@@ -713,9 +921,9 @@ index cbfba48..93d1864 100644
 +    fn activate(&mut self, _x: i32, _y: i32) { self.show_window(); }
 +    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
 +        use ksni::menu::{MenuItem, StandardItem};
-+        let mut show = StandardItem { label: "显示主界面".into(), ..Default::default() };
++        let mut show = StandardItem { label: tr("显示主界面").into(), ..Default::default() };
 +        show.activate = Box::new(|tray: &mut GaGaTray| tray.show_window());
-+        let mut exit = StandardItem { label: "退出".into(), ..Default::default() };
++        let mut exit = StandardItem { label: tr("退出").into(), ..Default::default() };
 +        exit.activate = Box::new(|tray: &mut GaGaTray| {
 +            tray.quit.store(true, std::sync::atomic::Ordering::SeqCst);
 +            tray.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
@@ -728,7 +936,7 @@ index cbfba48..93d1864 100644
  fn apply_style(ctx: &egui::Context, accent: Color32) {
      for (theme, dark) in [(egui::Theme::Light, false), (egui::Theme::Dark, true)] {
          let p = Pal::new(dark, accent);
-@@ -1778,6 +1979,8 @@ fn setup_fonts(ctx: &egui::Context) {
+@@ -1778,6 +1977,8 @@ fn setup_fonts(ctx: &egui::Context) {
      let mut fonts = egui::FontDefinitions::default();
      let read = |c: &[&str]| c.iter().find_map(|p| std::fs::read(p).ok());
      let mut base = Vec::new();
@@ -737,7 +945,7 @@ index cbfba48..93d1864 100644
      if let Some(d) = read(&[
          "C:\\Windows\\Fonts\\msyh.ttc",
          "C:\\Windows\\Fonts\\msyh.ttf",
-@@ -1804,7 +2007,7 @@ fn setup_fonts(ctx: &egui::Context) {
+@@ -1804,7 +2005,7 @@ fn setup_fonts(ctx: &egui::Context) {
      icons.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
      fonts.families.insert(FontFamily::Name("icons".into()), icons);
      if !base.is_empty() {
@@ -746,7 +954,7 @@ index cbfba48..93d1864 100644
      }
      let mut bold_fam: Vec<String> = Vec::new();
      if let Some(d) = read(&["C:\\Windows\\Fonts\\msyhbd.ttc", "C:\\Windows\\Fonts\\msyhbd.ttf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]) {
-@@ -1893,12 +2096,16 @@ impl App {
+@@ -1893,27 +2094,33 @@ impl App {
  
      fn install_extension(&mut self, ctx: &egui::Context, i: usize) {
          let b = self.browsers.get(i).cloned();
@@ -759,16 +967,18 @@ index cbfba48..93d1864 100644
 +            match launch_browser(b, url) {
 +                Ok(_) => {
 +                    self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
-+                    let target = if std::env::var_os("FLATPAK_ID").is_some() { "系统默认浏览器" } else { b.name };
-+                    self.toast(format!("已请求 {target} 打开插件商店页面"), false);
++                    let target = if std::env::var_os("FLATPAK_ID").is_some() { tr("系统默认浏览器") } else { b.name };
++                    self.toast(trf("已请求 {} 打开插件商店页面", &[&target]), false);
 +                }
-+                Err(e) => self.toast(format!("打开 {} 失败：{e}，请复制下方商店地址手动打开", b.name), true),
++                Err(e) => self.toast(trf("打开 {} 失败：{}，请复制下方商店地址手动打开", &[&b.name, &e]), true),
              }
 +            return;
          }
          let dir = match unpack_extension(self.engine.data_dir()) {
              Ok(d) => d,
-@@ -1907,8 +2114,10 @@ impl App {
+-            Err(e) => return self.toast(format!("解压插件失败：{e}"), true),
++            Err(e) => return self.toast(trf("解压插件失败：{}", &[&e]), true),
+         };
          match b {
              Some(b) => {
                  ctx.copy_text(b.page.to_string());
@@ -776,12 +986,56 @@ index cbfba48..93d1864 100644
 -                self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
 +                match launch_browser(&b, b.page) {
 +                    Ok(_) => self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() }),
-+                    Err(e) => self.toast(format!("打开 {} 失败：{e}", b.name), true),
++                    Err(e) => self.toast(trf("打开 {} 失败：{}", &[&b.name, &e]), true),
 +                }
              }
              None => {
                  ctx.copy_text(dir.display().to_string());
-@@ -2161,7 +2370,12 @@ impl App {
+                 open_path(&dir);
+-                self.toast("插件文件夹路径已复制", false);
++                self.toast(tr("插件文件夹路径已复制"), false);
+             }
+         }
+     }
+@@ -2008,7 +2215,7 @@ impl App {
+         for url in text.split_whitespace().filter(|u| u.contains("://")) {
+             let req = AddRequest { url: url.to_string(), source: Some("manual".into()), ..Default::default() };
+             match self.engine.add(req, None) {
+-                Ok(o) if o.existed => self.toast(format!("已在列表中：{}", o.filename), false),
++                Ok(o) if o.existed => self.toast(trf("已在列表中：{}", &[&o.filename]), false),
+                 Ok(_) => added += 1,
+                 Err(e) => self.toast(format!("{e}"), true),
+             }
+@@ -2027,7 +2234,7 @@ impl App {
+                 };
+                 self.go(Page::Downloads);
+                 self.mock_preview = Some(preview);
+-                self.toast("开发预览：模拟下载已开始，不会写入文件", false);
++                self.toast(tr("开发预览：模拟下载已开始，不会写入文件"), false);
+                 self.last_refresh = None;
+                 return;
+             }
+@@ -2108,8 +2315,8 @@ impl App {
+                         preview.paused_duration = Duration::ZERO;
+                     }
+                 }
+-                Act::Open | Act::Reveal => self.toast("开发预览没有实际下载文件", false),
+-                Act::CopyLink => self.toast("开发预览没有真实下载链接", false),
++                Act::Open | Act::Reveal => self.toast(tr("开发预览没有实际下载文件"), false),
++                Act::CopyLink => self.toast(tr("开发预览没有真实下载链接"), false),
+                 Act::ErrorInfo => {}
+             }
+             self.last_refresh = None;
+@@ -2126,7 +2333,7 @@ impl App {
+             Act::Reveal => reveal(v.path.as_deref().unwrap_or(&v.dir)),
+             Act::CopyLink => {
+                 ctx.copy_text(v.url.clone());
+-                self.toast("链接已复制", false);
++                self.toast(tr("链接已复制"), false);
+             }
+             Act::Remove => self.removing = Some(id),
+             Act::ErrorInfo => self.err_report = Some(id),
+@@ -2161,7 +2368,12 @@ impl App {
          let maxr = close.translate(vec2(-bw, 0.0));
          let minr = maxr.translate(vec2(-bw, 0.0));
          if chrome_btn(ui, close, Glyph::Close, p) {
@@ -795,7 +1049,413 @@ index cbfba48..93d1864 100644
          }
          if chrome_btn(ui, maxr, if maximized { Glyph::Restore } else { Glyph::Max }, p) {
              ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-@@ -2856,7 +3070,7 @@ impl App {
+@@ -2186,10 +2398,10 @@ impl App {
+                     .frame(egui::Frame::NONE)
+                     .font(font(12.5))
+                     .vertical_align(egui::Align::Center)
+-                    .hint_text(RichText::new(URL_INPUT_HINT).color(p.weak)),
++                    .hint_text(RichText::new(tr(URL_INPUT_HINT)).color(p.weak)),
+             );
+             let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+-            let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, "下载", p);
++            let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, tr("下载"), p);
+             if enter || clicked {
+                 self.add_input();
+             }
+@@ -2199,7 +2411,7 @@ impl App {
+     fn activity_bar(&mut self, ui: &mut Ui, p: &Pal) {
+         let r = ui.max_rect();
+         let active = self.views.iter().filter(|v| matches!(v.status, Status::Running | Status::Queued)).count();
+-        let items = [(Page::Downloads, ic::DOWNLOAD_SIMPLE, "下载"), (Page::Trash, ic::TRASH, "回收站"), (Page::Cache, ic::HARD_DRIVES, "缓存"), (Page::Extension, ic::PUZZLE_PIECE, "浏览器插件")];
++        let items = [(Page::Downloads, ic::DOWNLOAD_SIMPLE, tr("下载")), (Page::Trash, ic::TRASH, tr("回收站")), (Page::Cache, ic::HARD_DRIVES, tr("缓存")), (Page::Extension, ic::PUZZLE_PIECE, tr("浏览器插件"))];
+         let selected = self.page;
+         let mut indicator_y = None;
+         for (i, (page, icon, tip)) in items.into_iter().enumerate() {
+@@ -2213,7 +2425,7 @@ impl App {
+         if selected == Page::Settings {
+             indicator_y = Some(sr.center().y);
+         }
+-        self.activity_item(ui, sr, Page::Settings, ic::GEAR_SIX, "设置", 0, p);
++        self.activity_item(ui, sr, Page::Settings, ic::GEAR_SIX, tr("设置"), 0, p);
+         if let Some(target_y) = indicator_y {
+             let (center_y, height, moving) = self.nav_indicator.position(selected, target_y, Instant::now());
+             if moving {
+@@ -2259,10 +2471,10 @@ impl App {
+         };
+         item(speed(self.engine.total_speed()));
+         if busy {
+-            item(format!("{} 个下载中", running.len()));
++            item(trf("{} 个下载中", &[&running.len()]));
+         }
+         if queued > 0 {
+-            item(format!("{queued} 个排队"));
++            item(trf("{} 个排队", &[&queued]));
+         }
+         let (done, total) = running.iter().filter_map(|v| v.size.map(|s| (v.downloaded, s))).fold((0u64, 0u64), |a, b| (a.0 + b.0, a.1 + b.1));
+         if total > 0 {
+@@ -2292,9 +2504,9 @@ impl App {
+         let key = Id::new(("hero", v.id));
+         let net = spring(&ctx, key.with("spd"), v.speed as f32, 5.0, 0.0) as f64;
+         let stats = [
+-            ("网络", speed(net)),
+-            ("峰值", speed(peak.max(v.speed))),
+-            ("连接", format!("{} / {}", v.connections, v.target)),
++            (tr("网络"), speed(net)),
++            (tr("峰值"), speed(peak.max(v.speed))),
++            (tr("连接"), format!("{} / {}", v.connections, v.target)),
+         ];
+         for (i, (k, val)) in stats.iter().enumerate() {
+             let x = left.left() + i as f32 * 118.0;
+@@ -2303,7 +2515,7 @@ impl App {
+         }
+ 
+         let y = left.top() + 84.0;
+-        pt.text(pos2(left.left(), y), Align2::LEFT_CENTER, if v.status == Status::Paused { "已暂停" } else { "正在下载" }, font(12.0), p.text);
++        pt.text(pos2(left.left(), y), Align2::LEFT_CENTER, if v.status == Status::Paused { tr("已暂停") } else { tr("正在下载") }, font(12.0), p.text);
+         let f = seg_bar(&ctx, &pt, Rect::from_min_size(pos2(left.left(), y + 10.0), vec2(left.width(), 5.0)), v, p, key);
+         let right = match v.size {
+             Some(_) => format!("{}   {:.0}%", of(v), f * 100.0),
+@@ -2312,13 +2524,13 @@ impl App {
+         pt.text(pos2(left.right(), y), Align2::RIGHT_CENTER, right, font(12.0), p.weak);
+ 
+         let eta = match (v.status, v.eta_secs) {
+-            (Status::Running, Some(e)) => format!("剩余时间 {}", dur(e)),
++            (Status::Running, Some(e)) => trf("剩余时间 {}", &[&dur(e)]),
+             (Status::Running, None) => meta_line(v, p).0,
+             _ => String::new(),
+         };
+         pt.text(pos2(left.left(), y + 38.0), Align2::LEFT_CENTER, eta, font(12.0), p.weak);
+         let br = Rect::from_min_size(pos2(left.right() - 26.0, y + 25.0), vec2(26.0, 26.0));
+-        let (icon, tip, a) = if v.status == Status::Paused { (ic::PLAY, "继续", Act::Resume) } else { (ic::PAUSE, "暂停", Act::Pause) };
++        let (icon, tip, a) = if v.status == Status::Paused { (ic::PLAY, tr("继续"), Act::Resume) } else { (ic::PAUSE, tr("暂停"), Act::Pause) };
+         if icon_at(ui, br, Id::new("hero_btn"), icon, tip, p) {
+             self.act(&ctx, v, a);
+         }
+@@ -2395,14 +2607,14 @@ impl App {
+         ui.painter().text(
+             pos2(center.x, center.y - 48.0),
+             Align2::CENTER_CENTER,
+-            "欢迎使用 GaGaDown",
++            tr("欢迎使用 GaGaDown"),
+             bold(24.0),
+             p.text,
+         );
+         ui.painter().text(
+             pos2(center.x, center.y - 14.0),
+             Align2::CENTER_CENTER,
+-            "粘贴下载链接，开始你的第一次下载",
++            tr("粘贴下载链接，开始你的第一次下载"),
+             font(14.0),
+             p.weak,
+         );
+@@ -2434,17 +2646,17 @@ impl App {
+                 .frame(egui::Frame::NONE)
+                 .font(font(14.0))
+                 .vertical_align(egui::Align::Center)
+-                .hint_text(RichText::new(URL_INPUT_HINT).color(p.weak)),
++                .hint_text(RichText::new(tr(URL_INPUT_HINT)).color(p.weak)),
+         );
+         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+-        let clicked = icon_at(ui, button, Id::new("welcome_go"), ic::ARROW_DOWN, "开始下载", p);
++        let clicked = icon_at(ui, button, Id::new("welcome_go"), ic::ARROW_DOWN, tr("开始下载"), p);
+         if enter || clicked {
+             self.add_input();
+         }
+         ui.painter().text(
+             pos2(center.x, field.bottom() + 22.0),
+             Align2::CENTER_CENTER,
+-            "支持直接粘贴链接并按 Enter 开始",
++            tr("支持直接粘贴链接并按 Enter 开始"),
+             font(11.5),
+             p.weak,
+         );
+@@ -2454,12 +2666,12 @@ impl App {
+         let ctx = ui.ctx().clone();
+         let key = Id::new(("section", sec as u8));
+         let open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, true));
+-        let (title, actions): (&str, &[(&str, &str)]) = match sec {
+-            Sec::Active => ("下载中", &[(ic::PLAY, "全部开始"), (ic::PAUSE, "全部暂停")]),
+-            Sec::Failed => ("失败", &[(ic::ARROW_CLOCKWISE, "全部重试")]),
+-            Sec::Done => ("已完成", &[(ic::BROOM, "清除全部")]),
++        let (title, actions): (&str, Vec<(&str, &str)>) = match sec {
++            Sec::Active => (tr("下载中"), vec![(ic::PLAY, tr("全部开始")), (ic::PAUSE, tr("全部暂停"))]),
++            Sec::Failed => (tr("失败"), vec![(ic::ARROW_CLOCKWISE, tr("全部重试"))]),
++            Sec::Done => (tr("已完成"), vec![(ic::BROOM, tr("清除全部"))]),
+         };
+-        let actions = if items.is_empty() { &[][..] } else { actions };
++        let actions: &[(&str, &str)] = if items.is_empty() { &[] } else { &actions };
+         let (toggle, hit, btns) = header(ui, title, Some(items.len()), Some(open), actions, p);
+         if toggle {
+             ctx.data_mut(|d| d.insert_persisted(key, !open));
+@@ -2478,9 +2690,9 @@ impl App {
+                 ui.set_width(190.0);
+                 ui.spacing_mut().item_spacing.y = 1.0;
+                 for (mode, label, danger) in [
+-                    (RemoveMode::KeepFiles, "清除全部，保留文件", false),
+-                    (RemoveMode::TrashFiles, "清除全部，文件移到回收站", false),
+-                    (RemoveMode::DeleteFiles, "清除全部并彻底删除文件", true),
++                    (RemoveMode::KeepFiles, tr("清除全部，保留文件"), false),
++                    (RemoveMode::TrashFiles, tr("清除全部，文件移到回收站"), false),
++                    (RemoveMode::DeleteFiles, tr("清除全部并彻底删除文件"), true),
+                 ] {
+                     if menu_item(ui, label, danger, p) {
+                         pick = Some(mode);
+@@ -2518,8 +2730,8 @@ impl App {
+         if items.is_empty() {
+             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
+             let t = match sec {
+-                Sec::Active => "队列中无下载",
+-                _ => "暂无",
++                Sec::Active => tr("队列中无下载"),
++                _ => tr("暂无"),
+             };
+             ui.painter().text(pos2(r.left() + 52.0, r.center().y), Align2::LEFT_CENTER, t, font(12.5), p.weak);
+             return;
+@@ -2535,7 +2747,7 @@ impl App {
+         let ctx = ui.ctx().clone();
+         let key = Id::new("section_handoff");
+         let open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, true));
+-        let (toggle, hit, _) = header(ui, "未接管", Some(self.handoff_fails.len()), Some(open), &[(ic::BROOM, "清除记录")], p);
++        let (toggle, hit, _) = header(ui, tr("未接管"), Some(self.handoff_fails.len()), Some(open), &[(ic::BROOM, tr("清除记录"))], p);
+         if toggle {
+             ctx.data_mut(|d| d.insert_persisted(key, !open));
+         }
+@@ -2557,10 +2769,10 @@ impl App {
+             self.paint_file(&ctx, &pt, pos2(r.left() + 30.0, r.center().y), 26.0, &h.name, None, p, 0.7);
+             let w = (r.width() - 52.0 - 56.0).max(80.0);
+             text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &h.name, font(13.5), p.text, w);
+-            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, format!("{}   已交给浏览器下载   {}", h.reason, ago(h.at)), font(12.0), p.red, w);
++            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, trf("{}   已交给浏览器下载   {}", &[&h.reason, &ago(h.at)]), font(12.0), p.red, w);
+             if hovered {
+                 let b = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
+-                if icon_at(ui, b, resp.id.with(("handoff_x", i)), ic::X, "移除记录", p) {
++                if icon_at(ui, b, resp.id.with(("handoff_x", i)), ic::X, tr("移除记录"), p) {
+                     drop = Some(i);
+                 }
+             }
+@@ -2573,16 +2785,16 @@ impl App {
+ 
+     fn row_actions(v: &TaskView) -> Vec<(&'static str, &'static str, Act)> {
+         let mut a = match v.status {
+-            Status::Running | Status::Queued => vec![(ic::PAUSE, "暂停", Act::Pause)],
+-            Status::Paused => vec![(ic::PLAY, "继续", Act::Resume), (ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
+-            Status::Failed => vec![(ic::PLAY, "重试", Act::Resume), (ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
+-            Status::Completed if v.file_missing => vec![(ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
+-            Status::Completed => vec![(ic::FOLDER_OPEN, "打开所在文件夹", Act::Reveal)],
++            Status::Running | Status::Queued => vec![(ic::PAUSE, tr("暂停"), Act::Pause)],
++            Status::Paused => vec![(ic::PLAY, tr("继续"), Act::Resume), (ic::ARROW_CLOCKWISE, tr("重新下载"), Act::Redownload)],
++            Status::Failed => vec![(ic::PLAY, tr("重试"), Act::Resume), (ic::ARROW_CLOCKWISE, tr("重新下载"), Act::Redownload)],
++            Status::Completed if v.file_missing => vec![(ic::ARROW_CLOCKWISE, tr("重新下载"), Act::Redownload)],
++            Status::Completed => vec![(ic::FOLDER_OPEN, tr("打开所在文件夹"), Act::Reveal)],
+         };
+         if v.status == Status::Failed && v.error.is_some() {
+-            a.insert(0, (ic::INFO, "错误详情", Act::ErrorInfo));
++            a.insert(0, (ic::INFO, tr("错误详情"), Act::ErrorInfo));
+         }
+-        a.push((ic::TRASH, "删除", Act::Remove));
++        a.push((ic::TRASH, tr("删除"), Act::Remove));
+         a
+     }
+ 
+@@ -2634,10 +2846,10 @@ impl App {
+                     let t = since_on(&ctx, key.with("done"), !v.file_missing).unwrap_or(f32::INFINITY);
+                     if t < 1.3 {
+                         seg_bar(&ctx, &pt, Rect::from_min_size(pos2(rx - 160.0, r.top() + 29.0), vec2(160.0, 4.0)), v, p, key);
+-                        pt.text(pos2(rx, r.top() + 15.0), Align2::RIGHT_CENTER, "完成", font(12.0), p.green.gamma_multiply(ease_out_cubic(t / 0.4)));
++                        pt.text(pos2(rx, r.top() + 15.0), Align2::RIGHT_CENTER, tr("完成"), font(12.0), p.green.gamma_multiply(ease_out_cubic(t / 0.4)));
+                     } else if let Some(f) = v.finished_at {
+                         let a = ease_out_cubic((t - 1.3) / 0.35);
+-                        pt.text(pos2(rx, r.center().y), Align2::RIGHT_CENTER, format!("完成于 {}", when(f)), font(12.0), p.weak.gamma_multiply(a));
++                        pt.text(pos2(rx, r.center().y), Align2::RIGHT_CENTER, trf("完成于 {}", &[&when(f)]), font(12.0), p.weak.gamma_multiply(a));
+                     }
+                 }
+                 _ => {}
+@@ -2656,13 +2868,13 @@ impl App {
+             ui.set_width(140.0);
+             let mut items: Vec<(&str, &str, Act)> = Vec::new();
+             if v.status == Status::Completed && !v.file_missing && !mock_item {
+-                items.push((ic::FILE, "打开", Act::Open));
+-                items.push((ic::FOLDER_OPEN, "打开所在文件夹", Act::Reveal));
++                items.push((ic::FILE, tr("打开"), Act::Open));
++                items.push((ic::FOLDER_OPEN, tr("打开所在文件夹"), Act::Reveal));
+             } else {
+                 items.extend(row_actions.iter().copied().filter(|a| !matches!(a.2, Act::Remove)));
+             }
+-            items.push((ic::LINK, "复制链接", Act::CopyLink));
+-            items.push((ic::TRASH, "删除", Act::Remove));
++            items.push((ic::LINK, tr("复制链接"), Act::CopyLink));
++            items.push((ic::TRASH, tr("删除"), Act::Remove));
+             ui.spacing_mut().item_spacing.y = 1.0;
+             for (_, label, a) in items {
+                 if menu_item(ui, label, matches!(a, Act::Remove), p) {
+@@ -2679,8 +2891,8 @@ impl App {
+     fn detail(&mut self, ui: &mut Ui, v: &TaskView, p: &Pal) {
+         let ctx = ui.ctx().clone();
+         let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::hover());
+-        ui.painter().text(pos2(hr.left() + 16.0, hr.center().y), Align2::LEFT_CENTER, "详情", bold(12.0), p.text);
+-        if icon_at(ui, Rect::from_min_size(pos2(hr.right() - 34.0, hr.center().y - 12.0), vec2(24.0, 24.0)), Id::new("detail_close"), ic::X, "关闭", p) {
++        ui.painter().text(pos2(hr.left() + 16.0, hr.center().y), Align2::LEFT_CENTER, tr("详情"), bold(12.0), p.text);
++        if icon_at(ui, Rect::from_min_size(pos2(hr.right() - 34.0, hr.center().y - 12.0), vec2(24.0, 24.0)), Id::new("detail_close"), ic::X, tr("关闭"), p) {
+             self.selected = None;
+         }
+         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+@@ -2690,7 +2902,7 @@ impl App {
+                 ui.add(egui::Label::new(RichText::new(m).size(12.0).color(c)).wrap());
+                 if v.status == Status::Failed && v.error.is_some() {
+                     ui.add_space(4.0);
+-                    let l = ui.add(egui::Label::new(RichText::new("查看错误报告").size(12.0).color(p.accent)).sense(Sense::click()));
++                    let l = ui.add(egui::Label::new(RichText::new(tr("查看错误报告")).size(12.0).color(p.accent)).sense(Sense::click()));
+                     if l.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                         self.err_report = Some(v.id);
+                     }
+@@ -2710,53 +2922,53 @@ impl App {
+                             ui.add(egui::Label::new(RichText::new(s).size(12.0).color(p.text)).truncate());
+                         });
+                     };
+-                    k(ui, "大小");
+-                    val(ui, v.size.map(bytes).unwrap_or_else(|| "未知".into()));
++                    k(ui, tr("大小"));
++                    val(ui, v.size.map(bytes).unwrap_or_else(|| tr("未知").into()));
+                     ui.end_row();
+                     if v.status != Status::Completed {
+-                        k(ui, "已下载");
++                        k(ui, tr("已下载"));
+                         val(ui, format!("{}   {:.1}%", bytes(v.downloaded), frac(v) * 100.0));
+                         ui.end_row();
+                     }
+                     if v.status == Status::Running {
+-                        k(ui, "速度");
++                        k(ui, tr("速度"));
+                         val(ui, speed(v.speed));
+                         ui.end_row();
+-                        k(ui, "连接");
++                        k(ui, tr("连接"));
+                         val(ui, format!("{} / {}", v.connections, v.target));
+                         ui.end_row();
+                     }
+                     if v.avg_speed > 0.0 {
+-                        k(ui, "平均速度");
++                        k(ui, tr("平均速度"));
+                         val(ui, speed(v.avg_speed));
+                         ui.end_row();
+                     }
+-                    k(ui, "分段");
+-                    val(ui, if v.ranges { format!("支持，切分 {} 次", v.splits) } else { "不支持".into() });
++                    k(ui, tr("分段"));
++                    val(ui, if v.ranges { trf("支持，切分 {} 次", &[&v.splits]) } else { tr("不支持").into() });
+                     ui.end_row();
+                     if let Some(r) = &v.route {
+-                        k(ui, "线路");
++                        k(ui, tr("线路"));
+                         val(ui, r.clone());
+                         ui.end_row();
+                     }
+-                    k(ui, "添加于");
++                    k(ui, tr("添加于"));
+                     val(ui, when(v.created_at));
+                     ui.end_row();
+-                    k(ui, "保存到");
++                    k(ui, tr("保存到"));
+                     ui.allocate_ui_with_layout(vec2(vw, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                         ui.spacing_mut().item_spacing.x = 4.0;
+                         ui.spacing_mut().button_padding = vec2(2.0, 0.0);
+-                        if ui.add(egui::Button::new(RichText::new(ic::FOLDER_OPEN).font(ifont(13.0))).frame_when_inactive(false).small()).tip("打开所在文件夹").clicked() {
++                        if ui.add(egui::Button::new(RichText::new(ic::FOLDER_OPEN).font(ifont(13.0))).frame_when_inactive(false).small()).tip(tr("打开所在文件夹")).clicked() {
+                             act = Some(Act::Reveal);
+                         }
+                         ui.add(egui::Label::new(RichText::new(v.path.as_ref().unwrap_or(&v.dir).display().to_string()).size(12.0).color(p.text)).truncate());
+                     });
+                     ui.end_row();
+-                    k(ui, "链接");
++                    k(ui, tr("链接"));
+                     ui.allocate_ui_with_layout(vec2(vw, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                         ui.spacing_mut().item_spacing.x = 4.0;
+                         ui.spacing_mut().button_padding = vec2(2.0, 0.0);
+-                        if ui.add(egui::Button::new(RichText::new(ic::COPY).font(ifont(13.0))).frame_when_inactive(false).small()).tip("复制链接").clicked() {
++                        if ui.add(egui::Button::new(RichText::new(ic::COPY).font(ifont(13.0))).frame_when_inactive(false).small()).tip(tr("复制链接")).clicked() {
+                             act = Some(Act::CopyLink);
+                         }
+                         ui.add(egui::Label::new(RichText::new(&v.url).size(12.0).color(p.text)).truncate()).tip(&v.url);
+@@ -2768,7 +2980,7 @@ impl App {
+                 }
+                 if !v.host.is_empty() {
+                     ui.add_space(16.0);
+-                    ui.label(RichText::new("下载服务器").font(bold(12.0)).color(p.text));
++                    ui.label(RichText::new(tr("下载服务器")).font(bold(12.0)).color(p.text));
+                     ui.add_space(6.0);
+                     self.server_row(ui, v, p);
+                 }
+@@ -2783,18 +2995,19 @@ impl App {
+ 
+     fn trash(&mut self, ui: &mut Ui, p: &Pal) {
+         let ctx = ui.ctx().clone();
+-        let actions: &[(&str, &str)] = if self.deleted.is_empty() { &[] } else { &[(ic::BROOM, "清空回收站")] };
++        let clear_actions = [(ic::BROOM, tr("清空回收站"))];
++        let actions: &[(&str, &str)] = if self.deleted.is_empty() { &[] } else { &clear_actions };
+         ui.add_space(6.0);
+-        let (_, _, btns) = header(ui, "回收站", Some(self.deleted.len()), None, actions, p);
++        let (_, _, btns) = header(ui, tr("回收站"), Some(self.deleted.len()), None, actions, p);
+         if let Some(b) = btns.first() {
+             let mut pick = None;
+             egui::Popup::menu(b).show(|ui| {
+                 ui.set_width(190.0);
+                 ui.spacing_mut().item_spacing.y = 1.0;
+                 for (mode, label, danger) in [
+-                    (RemoveMode::KeepFiles, "只清空记录，保留文件", false),
+-                    (RemoveMode::TrashFiles, "文件移到系统回收站", false),
+-                    (RemoveMode::DeleteFiles, "彻底删除文件", true),
++                    (RemoveMode::KeepFiles, tr("只清空记录，保留文件"), false),
++                    (RemoveMode::TrashFiles, tr("文件移到系统回收站"), false),
++                    (RemoveMode::DeleteFiles, tr("彻底删除文件"), true),
+                 ] {
+                     if menu_item(ui, label, danger, p) {
+                         pick = Some(mode);
+@@ -2808,7 +3021,7 @@ impl App {
+             }
+         }
+         if self.deleted.is_empty() {
+-            ui.centered_and_justified(|ui| ui.label(RichText::new("回收站是空的").color(p.weak)));
++            ui.centered_and_justified(|ui| ui.label(RichText::new(tr("回收站是空的")).color(p.weak)));
+             return;
+         }
+         let list = self.deleted.clone();
+@@ -2825,21 +3038,21 @@ impl App {
+                 text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &d.rec.filename, font(13.5), p.text, w);
+                 let size = d.rec.size.map(bytes).unwrap_or_default();
+                 let mode = match d.mode {
+-                    RemoveMode::KeepFiles => "保留文件",
+-                    RemoveMode::TrashFiles => "文件在系统回收站",
+-                    RemoveMode::DeleteFiles => "文件已删除",
++                    RemoveMode::KeepFiles => tr("保留文件"),
++                    RemoveMode::TrashFiles => tr("文件在系统回收站"),
++                    RemoveMode::DeleteFiles => tr("文件已删除"),
+                 };
+-                text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, format!("{size}   {mode}   {}删除", ago(d.deleted_at)), font(12.0), p.weak, w);
++                text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, trf("{}   {}   {}删除", &[&size, &mode, &ago(d.deleted_at)]), font(12.0), p.weak, w);
+                 if hovered {
+                     let b2 = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
+                     let b1 = b2.translate(vec2(-28.0, 0.0));
+-                    if icon_at(ui, b1, resp.id.with("restore"), ic::ARROW_COUNTER_CLOCKWISE, "恢复", p) {
++                    if icon_at(ui, b1, resp.id.with("restore"), ic::ARROW_COUNTER_CLOCKWISE, tr("恢复"), p) {
+                         if !self.engine.restore(d.rec.id) {
+-                            self.toast("无法恢复", true);
++                            self.toast(tr("无法恢复"), true);
+                         }
+                         self.last_refresh = None;
+                     }
+-                    if icon_at(ui, b2, resp.id.with("purge"), ic::X, "彻底删除", p) {
++                    if icon_at(ui, b2, resp.id.with("purge"), ic::X, tr("彻底删除"), p) {
+                         self.engine.purge_deleted(Some(d.rec.id));
+                         self.last_refresh = None;
+                     }
+@@ -2850,13 +3063,13 @@ impl App {
+     }
+ 
+     fn extension_page(&mut self, ui: &mut Ui, p: &Pal) {
+-        Self::page_title(ui, "浏览器插件", None, &[], p);
++        Self::page_title(ui, tr("浏览器插件"), None, &[], p);
+         let ctx = ui.ctx().clone();
+         ctx.request_repaint_after(Duration::from_millis(500));
          let (mut act, mut copy, mut open, mut tab, mut copy_page, mut copy_token) = (None, false, false, None, None, false);
          let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
          let browsers = self.browsers.clone();
@@ -804,32 +1464,63 @@ index cbfba48..93d1864 100644
          let sel = self.ext_tab.min(browsers.len().saturating_sub(1));
          let on = browsers.get(sel).is_some_and(|b| self.ext_connected(b.key));
          let since = self.ext_guide.as_ref().filter(|g| g.browser == sel).map(|g| g.since);
-@@ -2927,7 +3141,8 @@ impl App {
-                 let (st, sc) = if on { ("已连接", p.green) } else { ("未连接", p.weak) };
+@@ -2876,15 +3089,15 @@ impl App {
+                 ui.spacing_mut().item_spacing.y = 0.0;
+                 let w = ui.available_width().min(680.0);
+                 let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
+-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装插件之后，下载就放心交给 GaGaDown 吧！", font(12.5), p.weak, w);
++                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, tr("安装插件之后，下载就放心交给 GaGaDown 吧！"), font(12.5), p.weak, w);
+                 ui.add_space(10.0);
+                 let Some(b) = browsers.get(sel) else {
+                     let (r, _) = ui.allocate_exact_size(vec2(w, 64.0), Sense::hover());
+                     let pt = ui.painter().clone();
+                     pt.rect(r, CornerRadius::same(8), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
+-                    text_line(&pt, pos2(r.left() + 16.0, r.center().y), Align2::LEFT_CENTER, "没有找到 Chrome 或 Edge", font(13.5), p.text, w - 160.0);
++                    text_line(&pt, pos2(r.left() + 16.0, r.center().y), Align2::LEFT_CENTER, tr("没有找到 Chrome 或 Edge"), font(13.5), p.text, w - 160.0);
+                     let br = Rect::from_min_size(pos2(r.right() - 130.0, r.center().y - 15.0), vec2(114.0, 30.0));
+-                    if btn_at(ui, br, Id::new("ext-folder"), "打开插件文件夹", false, p) {
++                    if btn_at(ui, br, Id::new("ext-folder"), tr("打开插件文件夹"), false, p) {
+                         act = Some(usize::MAX);
+                     }
+                     return;
+@@ -2924,36 +3137,53 @@ impl App {
+                 icon_at(&pt, sel, pos2(r.left() + 36.0, r.center().y), 40.0, 1.0);
+                 let tx = r.left() + 68.0;
+                 text_line(&pt, pos2(tx, r.center().y - 10.0), Align2::LEFT_CENTER, b.name, bold(15.0), p.text, w - 200.0);
+-                let (st, sc) = if on { ("已连接", p.green) } else { ("未连接", p.weak) };
++                let (st, sc) = if on { (tr("已连接"), p.green) } else { (tr("未连接"), p.weak) };
                  text_line(&pt, pos2(tx, r.center().y + 11.0), Align2::LEFT_CENTER, st, font(12.0), sc, 200.0);
                  let br = Rect::from_min_size(pos2(r.right() - 112.0, r.center().y - 15.0), vec2(96.0, 30.0));
 -                if btn_at(ui, br, Id::new(("ext-install", sel)), if on { "重新安装" } else { "安装插件" }, !on, p) {
-+                let install_label = if b.store_url.is_some() { "打开商店" } else if on { "重新安装" } else { "安装插件" };
++                let install_label = if b.store_url.is_some() { tr("打开商店") } else if on { tr("重新安装") } else { tr("安装插件") };
 +                if btn_at(ui, br, Id::new(("ext-install", sel)), install_label, !on, p) {
                      act = Some(sel);
                  }
  
-@@ -2940,20 +3155,36 @@ impl App {
+                 ui.add_space(10.0);
+                 let (row, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+-                text_line(ui.painter(), pos2(row.left(), row.center().y), Align2::LEFT_CENTER, "本机 API 配对码", font(12.5), p.weak, 120.0);
++                text_line(ui.painter(), pos2(row.left(), row.center().y), Align2::LEFT_CENTER, tr("本机 API 配对码"), font(12.5), p.weak, 120.0);
+                 let copy_rect = Rect::from_min_size(pos2(row.right() - 58.0, row.center().y - 14.0), vec2(58.0, 28.0));
+-                copy_token = btn_at(ui, copy_rect, Id::new("ext-copy-token"), "复制", false, p);
++                copy_token = btn_at(ui, copy_rect, Id::new("ext-copy-token"), tr("复制"), false, p);
+                 let token_rect = Rect::from_min_max(pos2(row.left() + 124.0, row.top()), pos2(copy_rect.left() - 8.0, row.bottom()));
                  ui.painter().rect(token_rect, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
                  text_line(ui.painter(), pos2(token_rect.left() + 8.0, token_rect.center().y), Align2::LEFT_CENTER, self.engine.extension_api_token(), FontId::monospace(10.0), p.text, token_rect.width() - 16.0);
  
 -                let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
                  ui.add_space(24.0);
                  let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-                 text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装步骤", bold(13.5), p.text, w);
+-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装步骤", bold(13.5), p.text, w);
++                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, tr("安装步骤"), bold(13.5), p.text, w);
                  let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
 -                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "点“安装插件”会打开浏览器，并复制好扩展页地址", font(12.0), p.weak, w);
 +                let hint = if std::env::var_os("FLATPAK_ID").is_some() {
-+                    "Flatpak 会调用系统默认浏览器；请确认打开的是 Chrome 或 Edge"
++                    tr("Flatpak 会调用系统默认浏览器；请确认打开的是 Chrome 或 Edge")
 +                } else if b.store_url.is_some() {
-+                    "点“打开商店”前往 Chrome 网上应用店，安装后完成配对并启用"
++                    tr("点“打开商店”前往 Chrome 网上应用店，安装后完成配对并启用")
 +                } else {
-+                    "点“安装插件”会打开浏览器，并复制好扩展页地址"
++                    tr("点“安装插件”会打开浏览器，并复制好扩展页地址")
 +                };
 +                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, hint, font(12.0), p.weak, w);
                  ui.add_space(8.0);
@@ -842,25 +1533,25 @@ index cbfba48..93d1864 100644
 -                ];
 +                let steps = if b.store_url.is_some() {
 +                    vec![
-+                        "在商店页面点击“添加至 Chrome”，并确认添加扩展程序".to_string(),
-+                        "在浏览器工具栏的扩展菜单中打开 GaGaDown".to_string(),
-+                        "将上方配对码粘贴到扩展弹窗，点击“保存配对码”".to_string(),
-+                        "阅读数据处理说明，勾选同意并点击“同意并启用”，确认权限".to_string(),
++                        tr("在商店页面点击“添加至 Chrome”，并确认添加扩展程序").to_string(),
++                        tr("在浏览器工具栏的扩展菜单中打开 GaGaDown").to_string(),
++                        tr("将上方配对码粘贴到扩展弹窗，点击“保存配对码”").to_string(),
++                        tr("阅读数据处理说明，勾选同意并点击“同意并启用”，确认权限").to_string(),
 +                    ]
 +                } else {
-+                    let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
++                    let (dev, load) = if b.key == "edge" { (tr("开发人员模式"), tr("加载解压缩的扩展")) } else { (tr("开发者模式"), tr("加载未打包的扩展程序")) };
 +                    vec![
-+                        format!("在浏览器地址栏粘贴 {} 并回车", b.page),
-+                        format!("在扩展页打开“{dev}”开关"),
-+                        format!("点击“{load}”"),
-+                        "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”".to_string(),
-+                        "在扩展弹出窗口粘贴上方配对码，并完成数据处理同意".to_string(),
++                        trf("在浏览器地址栏粘贴 {} 并回车", &[&b.page]),
++                        trf("在扩展页打开“{}”开关", &[&dev]),
++                        trf("点击“{}”", &[&load]),
++                        tr("复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”").to_string(),
++                        tr("在扩展弹出窗口粘贴上方配对码，并完成数据处理同意").to_string(),
 +                    ]
 +                };
                  let ind = 30.0;
                  for (n, s) in steps.iter().enumerate() {
                      let (r, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
-@@ -2961,36 +3192,46 @@ impl App {
+@@ -2961,36 +3191,46 @@ impl App {
                      let c = pos2(r.left() + 10.0, r.center().y);
                      pt.circle_filled(c, 10.0, p.accent.gamma_multiply(0.14));
                      pt.text(c, Align2::CENTER_CENTER, (n + 1).to_string(), font(11.5), p.accent);
@@ -872,7 +1563,7 @@ index cbfba48..93d1864 100644
 -                        if btn_at(ui, cb, Id::new("ext-copy-page"), "复制", false, p) {
 -                            copy_page = Some(b.page);
 +                        let cb = Rect::from_min_size(pos2(r.right() - 76.0, r.center().y - 14.0), vec2(76.0, 28.0));
-+                        if btn_at(ui, cb, Id::new("ext-copy-page"), "复制地址", false, p) {
++                        if btn_at(ui, cb, Id::new("ext-copy-page"), tr("复制地址"), false, p) {
 +                            copy_page = Some(b.store_url.unwrap_or(b.page));
                          }
                      }
@@ -889,7 +1580,7 @@ index cbfba48..93d1864 100644
 +                if b.store_url.is_some() {
 +                    ui.add_space(8.0);
 +                    let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-+                    text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "已安装开发者版本？请先停用或移除旧插件，再安装商店版本并重新配对。", font(12.0), p.weak, w);
++                    text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, tr("已安装开发者版本？请先停用或移除旧插件，再安装商店版本并重新配对。"), font(12.0), p.weak, w);
 +                } else {
 +                    ui.add_space(4.0);
 +                    let (row, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
@@ -898,8 +1589,8 @@ index cbfba48..93d1864 100644
 +                    let ob = Rect::from_min_size(pos2(r.right() - 98.0, r.top() + 4.0), vec2(94.0, 28.0));
 +                    let cb = Rect::from_min_size(pos2(ob.left() - 62.0, r.top() + 4.0), vec2(58.0, 28.0));
 +                    text_line(ui.painter(), pos2(r.left() + 12.0, r.center().y), Align2::LEFT_CENTER, &path_s, FontId::monospace(11.5), p.text, cb.left() - r.left() - 24.0);
-+                    copy = btn_at(ui, cb, Id::new("ext-copy"), "复制", false, p);
-+                    open = btn_at(ui, ob, Id::new("ext-open"), "打开文件夹", false, p);
++                    copy = btn_at(ui, cb, Id::new("ext-copy"), tr("复制"), false, p);
++                    open = btn_at(ui, ob, Id::new("ext-open"), tr("打开文件夹"), false, p);
 +                }
                  if since.is_none() {
                      return;
@@ -908,9 +1599,9 @@ index cbfba48..93d1864 100644
                  let (row, _) = ui.allocate_exact_size(vec2(w, 22.0), Sense::hover());
 -                let x0 = row.left() + ind;
 +                let (label, size, color) = if linked {
-+                    ("安装成功，插件已连接", 13.0, p.green)
++                    (tr("安装成功，插件已连接"), 13.0, p.green)
 +                } else {
-+                    ("等待插件连接…", 12.5, p.weak)
++                    (tr("等待插件连接…"), 12.5, p.weak)
 +                };
 +                let icon = row.left_center() + vec2(7.0, 0.0);
 +                text_line(ui.painter(), row.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, label, font(size), color, w - 22.0);
@@ -925,7 +1616,93 @@ index cbfba48..93d1864 100644
                  }
              });
          });
-@@ -3101,18 +3342,23 @@ impl App {
+@@ -3002,15 +3242,15 @@ impl App {
+         }
+         if copy {
+             ctx.copy_text(path_s);
+-            self.toast("路径已复制", false);
++            self.toast(tr("路径已复制"), false);
+         }
+         if let Some(u) = copy_page {
+             ctx.copy_text(u.to_string());
+-            self.toast("地址已复制", false);
++            self.toast(tr("地址已复制"), false);
+         }
+         if copy_token {
+             ctx.copy_text(self.engine.extension_api_token().to_string());
+-            self.toast("配对码已复制", false);
++            self.toast(tr("配对码已复制"), false);
+         }
+         if open {
+             let _ = unpack_extension(self.engine.data_dir());
+@@ -3019,7 +3259,7 @@ impl App {
+     }
+ 
+     fn cache_page(&mut self, ui: &mut Ui, p: &Pal) {
+-        if Self::page_title(ui, "缓存", None, &[(ic::ARROW_CLOCKWISE, "刷新")], p) == Some(0) {
++        if Self::page_title(ui, tr("缓存"), None, &[(ic::ARROW_CLOCKWISE, tr("刷新"))], p) == Some(0) {
+             self.cache = Some(self.engine.cache_report());
+         }
+         let Some(rep) = self.cache.clone() else { return };
+@@ -3033,26 +3273,26 @@ impl App {
+                     });
+                     ui.add_space(16.0);
+                 };
+-                stat(ui, "下载中", bytes(rep.active_bytes));
+-                stat(ui, "回收站", bytes(rep.deleted_bytes));
+-                stat(ui, "孤儿文件", bytes(rep.orphan_bytes));
++                stat(ui, tr("下载中"), bytes(rep.active_bytes));
++                stat(ui, tr("回收站"), bytes(rep.deleted_bytes));
++                stat(ui, tr("孤儿文件"), bytes(rep.orphan_bytes));
+                 if let Some(f) = rep.free_space {
+-                    stat(ui, "磁盘剩余", bytes(f));
++                    stat(ui, tr("磁盘剩余"), bytes(f));
+                 }
+             });
+             ui.add_space(12.0);
+             ui.horizontal(|ui| {
+-                if rep.orphan_bytes > 0 && btn(ui, "清理孤儿文件", true, p) {
++                if rep.orphan_bytes > 0 && btn(ui, tr("清理孤儿文件"), true, p) {
+                     let n = self.engine.clean_cache(true, false);
+-                    self.toast(format!("已释放 {}", bytes(n)), false);
++                    self.toast(trf("已释放 {}", &[&bytes(n)]), false);
+                     self.cache = Some(self.engine.cache_report());
+                 }
+-                if rep.deleted_bytes > 0 && btn(ui, "清理回收站缓存", false, p) {
++                if rep.deleted_bytes > 0 && btn(ui, tr("清理回收站缓存"), false, p) {
+                     let n = self.engine.clean_cache(false, true);
+-                    self.toast(format!("已释放 {}", bytes(n)), false);
++                    self.toast(trf("已释放 {}", &[&bytes(n)]), false);
+                     self.cache = Some(self.engine.cache_report());
+                 }
+-                if rep.missing_files > 0 && btn(ui, &format!("移除文件丢失的任务 ({})", rep.missing_files), false, p) {
++                if rep.missing_files > 0 && btn(ui, &trf("移除文件丢失的任务 ({})", &[&rep.missing_files]), false, p) {
+                     self.engine.prune_missing();
+                     self.cache = Some(self.engine.cache_report());
+                     self.last_refresh = None;
+@@ -3068,9 +3308,9 @@ impl App {
+                     pt.rect_filled(r, 0.0, p.hover);
+                 }
+                 let (k, c) = match it.kind {
+-                    CacheKind::Active => ("下载中", p.accent),
+-                    CacheKind::Deleted => ("回收站", p.orange),
+-                    CacheKind::Orphan => ("孤儿", p.red),
++                    CacheKind::Active => (tr("下载中"), p.accent),
++                    CacheKind::Deleted => (tr("回收站"), p.orange),
++                    CacheKind::Orphan => (tr("孤儿"), p.red),
+                 };
+                 pt.text(pos2(r.left() + 20.0, r.center().y), Align2::LEFT_CENTER, k, font(12.0), c);
+                 pt.text(pos2(r.left() + 80.0, r.center().y), Align2::LEFT_CENTER, bytes(it.bytes), font(12.0), p.text);
+@@ -3081,7 +3321,7 @@ impl App {
+ 
+     fn about(&mut self, ui: &mut Ui, p: &Pal) {
+         ui.add_space(28.0);
+-        ui.label(RichText::new("关于").font(bold(14.5)).color(p.text));
++        ui.label(RichText::new(tr("关于")).font(bold(14.5)).color(p.text));
+         ui.add_space(8.0);
+         let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
+         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 150.0), Sense::hover());
+@@ -3101,25 +3341,30 @@ impl App {
          let y = r.top() + 126.0;
          let mut lx = x;
          let repo = "https://github.com/shuakami/gagadown";
@@ -933,9 +1710,9 @@ index cbfba48..93d1864 100644
          let dir = self.engine.data_dir().to_path_buf();
 -        for (key, label, tip) in [("about_dir", "打开数据目录", "设置、任务记录和日志都在这里"), ("about_repo", "GitHub", repo)] {
 +        for (key, label, tip) in [
-+            ("about_dir", "打开数据目录", "设置、任务记录和日志都在这里"),
++            ("about_dir", tr("打开数据目录"), tr("设置、任务记录和日志都在这里")),
 +            ("about_repo", "GitHub", repo),
-+            ("about_privacy", "隐私政策", privacy),
++            ("about_privacy", tr("隐私政策"), privacy),
 +        ] {
              let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, label, font(12.5), p.accent, w);
              let resp = ui.interact(lr.expand(3.0), Id::new(key), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).tip(tip);
@@ -953,7 +1730,231 @@ index cbfba48..93d1864 100644
                  }
              }
              lx = lr.right() + 18.0;
-@@ -3530,6 +3776,7 @@ impl App {
+         }
+         let done = self.views.iter().filter(|v| v.status == Status::Completed);
+         let (n, total) = done.fold((0usize, 0u64), |(n, t), v| (n + 1, t + v.size.unwrap_or(0)));
+-        pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, format!("已完成 {n} 个下载，共 {}", bytes(total)), font(12.0), p.weak);
++        pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, trf("已完成 {} 个下载，共 {}", &[&n, &bytes(total)]), font(12.0), p.weak);
+     }
+ 
+     fn settings_page(&mut self, ui: &mut Ui, p: &Pal) {
+@@ -3132,71 +3377,71 @@ impl App {
+                 ui.vertical(|ui| {
+                     ui.set_width(w);
+                     ui.add_space(36.0);
+-                    ui.label(RichText::new("设置").font(bold(22.0)).color(p.text));
++                    ui.label(RichText::new(tr("设置")).font(bold(22.0)).color(p.text));
+                     let d = &mut self.draft;
+-                    group(ui, p, "常规", |ui, first| {
+-                        srow(ui, p, first, "开机自启", "", 52.0, |ui| toggle(ui, &mut d.launch_at_login, p));
+-                        srow(ui, p, first, "开机时静默启动", "开机自启时只在托盘运行，不弹出主窗口", 56.0, |ui| {
++                    group(ui, p, tr("常规"), |ui, first| {
++                        srow(ui, p, first, tr("开机自启"), "", 52.0, |ui| toggle(ui, &mut d.launch_at_login, p));
++                        srow(ui, p, first, tr("开机时静默启动"), tr("开机自启时只在托盘运行，不弹出主窗口"), 56.0, |ui| {
+                             ui.add_enabled_ui(d.launch_at_login, |ui| toggle(ui, &mut d.start_minimized, p));
+                         });
+                     });
+-                    group(ui, p, "下载", |ui, first| {
+-                        srow(ui, p, first, "下载目录", "", 52.0, |ui| {
+-                            if btn(ui, "更改", false, p) {
++                    group(ui, p, tr("下载"), |ui, first| {
++                        srow(ui, p, first, tr("下载目录"), "", 52.0, |ui| {
++                            if btn(ui, tr("更改"), false, p) {
+                                 if let Some(x) = rfd::FileDialog::new().set_directory(&d.download_dir).pick_folder() {
+                                     d.download_dir = x;
+                                 }
+                             }
+                             ui.add(egui::Label::new(RichText::new(d.download_dir.display().to_string()).size(13.0).color(p.text)).truncate());
+                         });
+-                        srow(ui, p, first, "缓存目录", "", 52.0, |ui| {
+-                            if btn(ui, "更改", false, p) {
++                        srow(ui, p, first, tr("缓存目录"), "", 52.0, |ui| {
++                            if btn(ui, tr("更改"), false, p) {
+                                 if let Some(x) = rfd::FileDialog::new().set_directory(d.cache_dir.as_ref().unwrap_or(&d.download_dir)).pick_folder() {
+                                     d.cache_dir = Some(x);
+                                 }
+                             }
+-                            if d.cache_dir.is_some() && btn(ui, "默认", false, p) {
++                            if d.cache_dir.is_some() && btn(ui, tr("默认"), false, p) {
+                                 d.cache_dir = None;
+                             }
+                             let (t, c) = match &d.cache_dir {
+                                 Some(x) => (x.display().to_string(), p.text),
+-                                None => ("下载目录".into(), p.weak),
++                                None => (tr("下载目录").into(), p.weak),
+                             };
+                             ui.add(egui::Label::new(RichText::new(t).size(13.0).color(c)).truncate());
+                         });
+-                        srow(ui, p, first, "同时下载任务", "超出的任务会排队", 56.0, |ui| {
++                        srow(ui, p, first, tr("同时下载任务"), tr("超出的任务会排队"), 56.0, |ui| {
+                             ui.add(egui::DragValue::new(&mut d.max_concurrent_tasks).range(1..=64));
+                         });
+-                        srow(ui, p, first, "初始连接数", "每个任务开始时的连接数", 56.0, |ui| {
++                        srow(ui, p, first, tr("初始连接数"), tr("每个任务开始时的连接数"), 56.0, |ui| {
+                             ui.add(egui::DragValue::new(&mut d.initial_connections).range(1..=256));
+                         });
+-                        srow(ui, p, first, "单任务最大连接数", "自动调节的上限", 56.0, |ui| {
++                        srow(ui, p, first, tr("单任务最大连接数"), tr("自动调节的上限"), 56.0, |ui| {
+                             ui.add(egui::DragValue::new(&mut d.max_connections_per_task).range(1..=256));
+                         });
+-                        srow(ui, p, first, "全局最大连接数", "所有任务合计", 56.0, |ui| {
++                        srow(ui, p, first, tr("全局最大连接数"), tr("所有任务合计"), 56.0, |ui| {
+                             ui.add(egui::DragValue::new(&mut d.max_connections_total).range(1..=4096));
+                         });
+-                        srow(ui, p, first, "最小分段", "小于这个大小不再切分", 56.0, |ui| {
++                        srow(ui, p, first, tr("最小分段"), tr("小于这个大小不再切分"), 56.0, |ui| {
+                             let mut kb = d.min_split_size / 1024;
+                             if ui.add(egui::DragValue::new(&mut kb).range(64..=65536).suffix(" KB")).changed() {
+                                 d.min_split_size = kb * 1024;
+                             }
+                         });
+-                        srow(ui, p, first, "限速", "0 为不限", 56.0, |ui| {
++                        srow(ui, p, first, tr("限速"), tr("0 为不限"), 56.0, |ui| {
+                             let mut kb = d.speed_limit / 1024;
+                             if ui.add(egui::DragValue::new(&mut kb).range(0..=10_000_000).suffix(" KB/s")).changed() {
+                                 d.speed_limit = kb * 1024;
+                             }
+                         });
+-                        srow(ui, p, first, "分段重试次数", "", 52.0, |ui| {
++                        srow(ui, p, first, tr("分段重试次数"), "", 52.0, |ui| {
+                             ui.add(egui::DragValue::new(&mut d.segment_retries).range(0..=1000));
+                         });
+-                        srow(ui, p, first, "任务自动重试次数", "", 52.0, |ui| {
++                        srow(ui, p, first, tr("任务自动重试次数"), "", 52.0, |ui| {
+                             ui.add(egui::DragValue::new(&mut d.task_auto_retries).range(0..=100));
+                         });
+                     });
+-                    group(ui, p, "网络", |ui, first| {
+-                        srow(ui, p, first, "代理模式", "", 52.0, |ui| {
++                    group(ui, p, tr("网络"), |ui, first| {
++                        srow(ui, p, first, tr("代理模式"), "", 52.0, |ui| {
+                             egui::ComboBox::from_id_salt("pmode").width(230.0).selected_text(d.proxy.mode.label()).show_ui(ui, |ui| {
+                                 ui.spacing_mut().item_spacing.y = 1.0;
+                                 for m in ProxyMode::ALL {
+@@ -3207,17 +3452,17 @@ impl App {
+                                 }
+                             });
+                         });
+-                        srow(ui, p, first, "代理地址", "每行一个", 92.0, |ui| {
++                        srow(ui, p, first, tr("代理地址"), tr("每行一个"), 92.0, |ui| {
+                             ui.add(egui::TextEdit::multiline(&mut self.draft_proxies).hint_text("http://127.0.0.1:7890").desired_rows(3).desired_width(260.0));
+                         });
+-                        srow(ui, p, first, "自动探测本机代理", "扫描 Clash、v2rayN 等常用端口", 56.0, |ui| toggle(ui, &mut d.proxy.auto_detect, p));
+-                        srow(ui, p, first, "使用系统代理", "", 52.0, |ui| toggle(ui, &mut d.proxy.use_system, p));
+-                        srow(ui, p, first, "直连等待", "超时后同时尝试代理", 56.0, |ui| {
++                        srow(ui, p, first, tr("自动探测本机代理"), tr("扫描 Clash、v2rayN 等常用端口"), 56.0, |ui| toggle(ui, &mut d.proxy.auto_detect, p));
++                        srow(ui, p, first, tr("使用系统代理"), "", 52.0, |ui| toggle(ui, &mut d.proxy.use_system, p));
++                        srow(ui, p, first, tr("直连等待"), tr("超时后同时尝试代理"), 56.0, |ui| {
+                             ui.add(egui::DragValue::new(&mut d.proxy.hedge_delay_ms).range(0..=30000).suffix(" ms"));
+                         });
+                         let found = self.engine.detected_proxies();
+-                        let desc = if found.is_empty() { "无".to_string() } else { found.join("  ") };
+-                        srow(ui, p, first, "已发现代理", &desc, 56.0, |ui| {
++                        let desc = if found.is_empty() { tr("无").to_string() } else { found.join("  ") };
++                        srow(ui, p, first, tr("已发现代理"), &desc, 56.0, |ui| {
+                             if self.engine.is_detecting() {
+                                 ui.spinner();
+                             }
+@@ -3226,25 +3471,25 @@ impl App {
+                             ui.add(egui::TextEdit::singleline(&mut d.user_agent).desired_width(300.0));
+                         });
+                     });
+-                    group(ui, p, "浏览器", |ui, first| {
+-                        srow(ui, p, first, "接管最小文件", "小于这个大小交给浏览器下载", 56.0, |ui| {
++                    group(ui, p, tr("浏览器"), |ui, first| {
++                        srow(ui, p, first, tr("接管最小文件"), tr("小于这个大小交给浏览器下载"), 56.0, |ui| {
+                             let mut kb = d.takeover_min_size / 1024;
+                             if ui.add(egui::DragValue::new(&mut kb).range(0..=10_000_000).suffix(" KB")).changed() {
+                                 d.takeover_min_size = kb * 1024;
+                             }
+                         });
+-                        srow(ui, p, first, "本地端口", "重启后生效", 56.0, |ui| {
++                        srow(ui, p, first, tr("本地端口"), tr("重启后生效"), 56.0, |ui| {
+                             ui.add(egui::DragValue::new(&mut d.api_port).range(1024..=65535));
+                         });
+                     });
+-                    group(ui, p, "清理", |ui, first| {
+-                        srow(ui, p, first, "回收站保留", "", 52.0, |ui| {
+-                            ui.add(egui::DragValue::new(&mut d.deleted_retention_days).range(0..=3650).suffix(" 天"));
++                    group(ui, p, tr("清理"), |ui, first| {
++                        srow(ui, p, first, tr("回收站保留"), "", 52.0, |ui| {
++                            ui.add(egui::DragValue::new(&mut d.deleted_retention_days).range(0..=3650).suffix(tr(" 天")));
+                         });
+-                        srow(ui, p, first, "孤儿文件自动清理", "0 为不清理", 56.0, |ui| {
+-                            ui.add(egui::DragValue::new(&mut d.orphan_auto_clean_days).range(0..=3650).suffix(" 天"));
++                        srow(ui, p, first, tr("孤儿文件自动清理"), tr("0 为不清理"), 56.0, |ui| {
++                            ui.add(egui::DragValue::new(&mut d.orphan_auto_clean_days).range(0..=3650).suffix(tr(" 天")));
+                         });
+-                        srow(ui, p, first, "完成后刷盘", "确保文件完整写入磁盘", 56.0, |ui| toggle(ui, &mut d.sync_on_complete, p));
++                        srow(ui, p, first, tr("完成后刷盘"), tr("确保文件完整写入磁盘"), 56.0, |ui| toggle(ui, &mut d.sync_on_complete, p));
+                     });
+                     self.about(ui, p);
+                     ui.add_space(48.0);
+@@ -3295,7 +3540,7 @@ impl App {
+             ui.set_opacity(a);
+             ui.set_width(520.0);
+             ui.spacing_mut().item_spacing.y = 2.0;
+-            ui.label(RichText::new("错误报告").font(bold(15.0)).color(p.text));
++            ui.label(RichText::new(tr("错误报告")).font(bold(15.0)).color(p.text));
+             ui.add_space(2.0);
+             ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.weak)).truncate());
+             ui.add_space(12.0);
+@@ -3313,10 +3558,10 @@ impl App {
+             let shut = Rect::from_min_size(pos2(copy.left() - 84.0, row.top()), vec2(76.0, 30.0));
+             let cr = ui.interact(copy, Id::new("er-copy"), Sense::click());
+             ui.painter().rect_filled(copy, CornerRadius::same(6), if cr.hovered() { blend(p.accent, Color32::BLACK, 0.88) } else { p.accent });
+-            ui.painter().text(copy.center(), Align2::CENTER_CENTER, "复制报告", font(13.0), Color32::WHITE);
++            ui.painter().text(copy.center(), Align2::CENTER_CENTER, tr("复制报告"), font(13.0), Color32::WHITE);
+             let sr = ui.interact(shut, Id::new("er-close"), Sense::click());
+             ui.painter().rect_filled(shut, CornerRadius::same(6), p.text.gamma_multiply(if sr.hovered() { 0.1 } else { 0.06 }));
+-            ui.painter().text(shut.center(), Align2::CENTER_CENTER, "关闭", font(13.0), p.text);
++            ui.painter().text(shut.center(), Align2::CENTER_CENTER, tr("关闭"), font(13.0), p.text);
+             if cr.clicked() && !closing {
+                 ui.ctx().copy_text(report.clone());
+             }
+@@ -3344,19 +3589,21 @@ impl App {
+             ui.set_opacity(a);
+             ui.set_width(340.0);
+             ui.spacing_mut().item_spacing.y = 2.0;
+-            ui.label(RichText::new("删除任务").font(bold(15.0)).color(p.text));
++            ui.label(RichText::new(tr("删除任务")).font(bold(15.0)).color(p.text));
+             ui.add_space(2.0);
+             ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.weak)).truncate());
+             ui.add_space(14.0);
+             if mock_item {
+-                ui.label(RichText::new("开发预览任务没有真实文件，只会移除这条模拟记录。").size(12.0).color(p.weak));
++                ui.label(RichText::new(tr("开发预览任务没有真实文件，只会移除这条模拟记录。")).size(12.0).color(p.weak));
+                 ui.add_space(8.0);
+             }
+-            let options: &[(RemoveMode, &str)] = if mock_item {
+-                &[(RemoveMode::KeepFiles, "移除模拟任务")]
+-            } else {
+-                &[(RemoveMode::KeepFiles, "只删除任务，保留文件"), (RemoveMode::TrashFiles, "文件移到回收站"), (RemoveMode::DeleteFiles, "彻底删除文件")]
+-            };
++            let mock_only = [(RemoveMode::KeepFiles, tr("移除模拟任务"))];
++            let all_modes = [
++                (RemoveMode::KeepFiles, tr("只删除任务，保留文件")),
++                (RemoveMode::TrashFiles, tr("文件移到回收站")),
++                (RemoveMode::DeleteFiles, tr("彻底删除文件")),
++            ];
++            let options: &[(RemoveMode, &str)] = if mock_item { &mock_only } else { &all_modes };
+             for &(mode, label) in options {
+                 let (r, resp) = ui.allocate_exact_size(vec2(340.0, 34.0), Sense::click());
+                 let on = mock_item || self.remove_mode == mode;
+@@ -3381,10 +3628,10 @@ impl App {
+             let okr = ui.interact(ok, Id::new("rm-ok"), Sense::click());
+             let base = if danger { p.red } else { p.accent };
+             ui.painter().rect_filled(ok, CornerRadius::same(6), if okr.hovered() { blend(base, Color32::BLACK, 0.88) } else { base });
+-            ui.painter().text(ok.center(), Align2::CENTER_CENTER, if mock_item { "移除预览" } else { "删除" }, font(13.0), Color32::WHITE);
++            ui.painter().text(ok.center(), Align2::CENTER_CENTER, if mock_item { tr("移除预览") } else { tr("删除") }, font(13.0), Color32::WHITE);
+             let cr = ui.interact(cancel, Id::new("rm-cancel"), Sense::click());
+             ui.painter().rect_filled(cancel, CornerRadius::same(6), p.text.gamma_multiply(if cr.hovered() { 0.1 } else { 0.06 }));
+-            ui.painter().text(cancel.center(), Align2::CENTER_CENTER, "取消", font(13.0), p.text);
++            ui.painter().text(cancel.center(), Align2::CENTER_CENTER, tr("取消"), font(13.0), p.text);
+             if !closing && (okr.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                 if self.page == Page::Downloads && self.views.len() == 1 && self.handoff_fails.is_empty() {
+                     self.welcome_transition_pending = true;
+@@ -3530,6 +3777,7 @@ impl App {
                  .with_decorations(false)
                  .with_resizable(false)
                  .with_always_on_top()
@@ -961,7 +1962,98 @@ index cbfba48..93d1864 100644
                  .with_icon(self.icon.clone());
              let mut close = false;
              ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("popup", pop.key)), builder, |ui, _| {
-@@ -3948,10 +4195,10 @@ fn main() -> eframe::Result {
+@@ -3575,7 +3823,7 @@ impl App {
+             let pt = ui.painter().clone();
+             self.paint_file(&ctx, &pt, pos2(b.left() + 18.0, b.top() + 18.0), 36.0, &pop.name, None, p, 1.0);
+             text_line(&pt, pos2(b.left() + 48.0, b.top() + 9.0), Align2::LEFT_CENTER, &pop.name, bold(14.0), p.text, b.width() - 48.0);
+-            let size = pop.size.map(bytes).unwrap_or_else(|| "大小未知".into());
++            let size = pop.size.map(bytes).unwrap_or_else(|| tr("大小未知").into());
+             text_line(&pt, pos2(b.left() + 48.0, b.top() + 28.0), Align2::LEFT_CENTER, format!("{size}   {}", pop.host), font(12.0), p.weak, b.width() - 48.0);
+             let by = b.top() + 56.0;
+             let bar = Rect::from_min_size(pos2(b.left(), by), vec2(b.width(), 4.0));
+@@ -3584,15 +3832,15 @@ impl App {
+                 let t = since_on(&ctx, Id::new(("pending_err", pop.key)), true).unwrap_or(1.0);
+                 let k = ease_out_cubic((t / 0.5).min(1.0));
+                 pt.rect_filled(bar, CornerRadius::same(2), blend(p.red, p.accent, k));
+-                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, format!("无法接管：{err}"), font(12.0), p.red, b.width());
+-                text_line(&pt, pos2(b.left(), by + 40.0), Align2::LEFT_CENTER, "已交给浏览器继续下载", font(12.0), p.weak, b.width() - 90.0);
+-                "关闭"
++                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, trf("无法接管：{}", &[&err]), font(12.0), p.red, b.width());
++                text_line(&pt, pos2(b.left(), by + 40.0), Align2::LEFT_CENTER, tr("已交给浏览器继续下载"), font(12.0), p.weak, b.width() - 90.0);
++                tr("关闭")
+             } else {
+                 let now = ctx.input(|i| i.time);
+                 ctx.data_mut(|d| d.insert_temp(Id::new(("pend", pop.key)), now));
+                 indeterminate(&pt, bar, ctx.input(|i| i.time), p.accent);
+-                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, "正在连接…", font(12.0), p.weak, b.width());
+-                "取消"
++                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, tr("正在连接…"), font(12.0), p.weak, b.width());
++                tr("取消")
+             };
+             let r = Rect::from_min_size(pos2(b.right() - 76.0, b.bottom() - 28.0), vec2(76.0, 28.0));
+             if btn_at(ui, r, Id::new(("pending_btn", pop.key)), label, false, p) {
+@@ -3642,7 +3890,7 @@ impl App {
+                 pt.add(Shape::line(vec![m(-3.4, 0.2), m(-1.1, 2.5), m(3.5, -2.3)], Stroke::new(1.6 * badge.min(1.0), Color32::WHITE)));
+             }
+             text_line(&pt, pos2(b.left() + 48.0, b.top() + 9.0), Align2::LEFT_CENTER, &v.filename, bold(14.0), p.text, b.width() - 48.0);
+-            let size = v.size.map(bytes).unwrap_or_else(|| "大小未知".into());
++            let size = v.size.map(bytes).unwrap_or_else(|| tr("大小未知").into());
+             text_line(&pt, pos2(b.left() + 48.0, b.top() + 28.0), Align2::LEFT_CENTER, format!("{size}   {}", v.host), font(12.0), p.weak, b.width() - 48.0);
+ 
+             let by = b.top() + 56.0;
+@@ -3660,21 +3908,21 @@ impl App {
+             if ok {
+                 let a = since.map_or(1.0, |t| ease_out_cubic((t - 0.35) / 0.4));
+                 let y = by + 22.0 + (1.0 - a) * 6.0;
+-                let r1 = text_line(&pt, pos2(b.left(), y), Align2::LEFT_CENTER, "下载完成", font(12.5), p.green.gamma_multiply(a), 120.0);
++                let r1 = text_line(&pt, pos2(b.left(), y), Align2::LEFT_CENTER, tr("下载完成"), font(12.5), p.green.gamma_multiply(a), 120.0);
+                 let mut extra = Vec::new();
+                 if let Some(fin) = v.finished_at {
+-                    extra.push(format!("用时 {}", dur(fin.saturating_sub(v.created_at).max(1))));
++                    extra.push(trf("用时 {}", &[&dur(fin.saturating_sub(v.created_at).max(1))]));
+                 }
+                 if v.avg_speed > 0.0 {
+-                    extra.push(format!("平均 {}", speed(v.avg_speed)));
++                    extra.push(trf("平均 {}", &[&speed(v.avg_speed)]));
+                 }
+                 text_line(&pt, pos2(r1.right() + 12.0, y), Align2::LEFT_CENTER, extra.join("   "), font(12.0), p.weak.gamma_multiply(a), b.right() - r1.right() - 12.0);
+             } else {
+                 let sp = speed(spring(&ctx, key.with("spd"), v.speed as f32, 5.0, 0.0) as f64);
+                 let (line, lc) = match v.status {
+                     Status::Running => match v.eta_secs {
+-                        Some(e) => (format!("{sp}   剩余 {}   {} 连接", dur(e), v.connections), p.weak),
+-                        None => (format!("{sp}   {} 连接", v.connections), p.weak),
++                        Some(e) => (trf("{}   剩余 {}   {} 连接", &[&sp, &dur(e), &v.connections]), p.weak),
++                        None => (trf("{}   {} 连接", &[&sp, &v.connections]), p.weak),
+                     },
+                     _ => meta_line(v, p),
+                 };
+@@ -3683,12 +3931,12 @@ impl App {
+             }
+ 
+             let buttons: Vec<(&str, bool, Option<Act>)> = match v.status {
+-                Status::Completed if !v.file_missing => vec![("打开所在文件夹", false, Some(Act::Reveal)), ("打开", true, Some(Act::Open))],
+-                Status::Running | Status::Queued => vec![("取消", false, None), ("暂停", true, Some(Act::Pause))],
+-                Status::Paused => vec![("取消", false, None), ("继续", true, Some(Act::Resume))],
+-                _ => vec![("取消", false, None), ("重试", true, Some(Act::Resume))],
++                Status::Completed if !v.file_missing => vec![(tr("打开所在文件夹"), false, Some(Act::Reveal)), (tr("打开"), true, Some(Act::Open))],
++                Status::Running | Status::Queued => vec![(tr("取消"), false, None), (tr("暂停"), true, Some(Act::Pause))],
++                Status::Paused => vec![(tr("取消"), false, None), (tr("继续"), true, Some(Act::Resume))],
++                _ => vec![(tr("取消"), false, None), (tr("重试"), true, Some(Act::Resume))],
+             };
+-            let show = "在主界面中显示";
++            let show = tr("在主界面中显示");
+             let sw = pt.layout_no_wrap(show.to_string(), font(12.5), p.text).size().x + 28.0;
+             let sr = Rect::from_min_size(pos2(b.left(), b.bottom() - 28.0), vec2(sw, 28.0));
+             if btn_at(ui, sr, Id::new(("popup_show", v.id)), show, false, p) {
+@@ -3942,16 +4190,16 @@ fn main() -> eframe::Result {
+         let ae = api_error.clone();
+         rt.spawn(async move {
+             if let Err(x) = gagadown_core::api::serve(e, port).await {
+-                *ae.lock() = Some(format!("浏览器插件端口 {port} 不可用：{x}"));
++                *ae.lock() = Some(trf("浏览器插件端口 {} 不可用：{}", &[&port, &x]));
+             }
+         });
      }
      let icon = Arc::new(egui::IconData { rgba: ICON.to_vec(), width: 256, height: 256 });
      let accent = win::accent().unwrap_or(DEFAULT_ACCENT);
@@ -974,7 +2066,7 @@ index cbfba48..93d1864 100644
              .with_inner_size([1120.0, 720.0])
              .with_min_inner_size([760.0, 480.0])
              .with_decorations(false)
-@@ -3959,6 +4206,17 @@ fn main() -> eframe::Result {
+@@ -3959,6 +4207,17 @@ fn main() -> eframe::Result {
          centered: true,
          ..Default::default()
      };
@@ -992,11 +2084,304 @@ index cbfba48..93d1864 100644
      #[cfg(windows)]
      eframe::epaint::text::set_glyph_rasterizer(win::gdi_glyph);
      eframe::run_native(
+diff --git a/crates/gagadown-app/src/strings.rs b/crates/gagadown-app/src/strings.rs
+new file mode 100644
+index 0000000..20b4b8f
+--- /dev/null
++++ b/crates/gagadown-app/src/strings.rs
+@@ -0,0 +1,267 @@
++//! English translations for the app UI. Call sites keep the Chinese literal
++//! as the lookup key — `tr("下载")` — so the diff stays mechanical. `tr`
++//! returns the Chinese text on zh locales and the English entry on any other
++//! locale; missing entries fall back to the key itself.
++
++use gagadown_core::lang::{lang, Lang};
++
++/// Translate a user-facing string. `zh` doubles as the lookup key.
++pub fn tr(zh: &'static str) -> &'static str {
++    match lang() {
++        Lang::Zh => zh,
++        Lang::En => en(zh),
++    }
++}
++
++/// `tr` for format templates: `{}` placeholders are filled in order, and
++/// `{0}`/`{1}` style indices are honoured so English may reorder arguments.
++/// (`format!` itself requires a literal template, hence this helper.)
++pub fn trf(zh: &'static str, args: &[&dyn std::fmt::Display]) -> String {
++    let mut out = tr(zh).to_string();
++    for (i, arg) in args.iter().enumerate() {
++        let indexed = format!("{{{i}}}");
++        if out.contains(&indexed) {
++            out = out.replace(&indexed, &arg.to_string());
++        } else {
++            out = out.replacen("{}", &arg.to_string(), 1);
++        }
++    }
++    out
++}
++
++fn en(zh: &'static str) -> &'static str {
++    match zh {
++        "粘贴下载链接（Dev 可输入任意文本预览）" => "Paste a download link (dev builds can preview with any text)",
++        "粘贴下载链接或搜索" => "Paste a download link or search",
++        "模拟下载 · {}.bin" => "Mock download · {0}.bin",
++        "{} 秒" => "{0}s",
++        "{} 分 {} 秒" => "{0}m {1}s",
++        "{} 小时 {} 分" => "{0}h {1}m",
++        "刚刚" => "just now",
++        "{} 分钟前" => "{0} min ago",
++        "{} 小时前" => "{0} hr ago",
++        "{} 天前" => "{0}d ago",
++        "文件    {}" => "File    {0}",
++        "链接    {}" => "Link    {0}",
++        "时间    {}" => "Time    {0}",
++        "类型    {}" => "Type    {0}",
++        "状态码  HTTP {}" => "Status  HTTP {0}",
++        "原始信息  {}" => "Error    {0}",
++        "\n各线路结果\n" => "\nRoute results\n",
++        "无响应" => "no response",
++        "\n最近日志\n" => "\nRecent log\n",
++        "今天 %H:%M" => "Today %H:%M",
++        "昨天 %H:%M" => "Yesterday %H:%M",
++        "{}月{}日 {}" => "{0}/{1} {2}",
++        "{}年{}月{}日" => "{1}/{2}/{0}",
++        "排队中   {}" => "Queued   {0}",
++        "排队中" => "Queued",
++        "已暂停   {}" => "Paused   {0}",
++        "   剩余 {}" => "   {0} left",
++        "连接中" => "Connecting",
++        "写入中" => "Writing",
++        "校验中" => "Verifying",
++        "文件已被移动或删除" => "File was moved or deleted",
++        "   平均 {}" => "   avg {0}",
++        "失败" => "Failed",
++        "，{} 后自动重试" => ", retrying in {0}",
++        "{} · {} 秒前" => "{0} · {1}s ago",
++        "显示主界面" => "Show Window",
++        "退出" => "Quit",
++        "系统默认浏览器" => "the system default browser",
++        "已请求 {} 打开插件商店页面" => "Asked {0} to open the extension store page",
++        "打开 {} 失败：{}，请复制下方商店地址手动打开" => "Failed to open {0}: {1}. Copy the store URL below and open it manually",
++        "解压插件失败：{}" => "Failed to extract the extension: {0}",
++        "打开 {} 失败：{}" => "Failed to open {0}: {1}",
++        "插件文件夹路径已复制" => "Extension folder path copied",
++        "已在列表中：{}" => "Already in the list: {0}",
++        "开发预览：模拟下载已开始，不会写入文件" => "Dev preview: simulated download started, no file will be written",
++        "开发预览没有实际下载文件" => "The dev preview has no downloaded file",
++        "开发预览没有真实下载链接" => "The dev preview has no real download link",
++        "链接已复制" => "Link copied",
++        "下载" => "Download",
++        "回收站" => "Trash",
++        "缓存" => "Cache",
++        "浏览器插件" => "Browser Extension",
++        "设置" => "Settings",
++        "{} 个下载中" => "{0} downloading",
++        "{} 个排队" => "{0} queued",
++        "网络" => "Network",
++        "峰值" => "Peak",
++        "连接" => "Connections",
++        "已暂停" => "Paused",
++        "正在下载" => "Downloading",
++        "剩余时间 {}" => "Time left {0}",
++        "继续" => "Resume",
++        "暂停" => "Pause",
++        "欢迎使用 GaGaDown" => "Welcome to GaGaDown",
++        "粘贴下载链接，开始你的第一次下载" => "Paste a download link and start your first download",
++        "开始下载" => "Start Download",
++        "支持直接粘贴链接并按 Enter 开始" => "Paste a link and press Enter to begin",
++        "下载中" => "Downloading",
++        "已完成" => "Completed",
++        "全部开始" => "Start All",
++        "全部暂停" => "Pause All",
++        "全部重试" => "Retry All",
++        "清除全部" => "Clear All",
++        "清除全部，保留文件" => "Clear all, keep files",
++        "清除全部，文件移到回收站" => "Clear all, move files to trash",
++        "清除全部并彻底删除文件" => "Clear all and permanently delete files",
++        "队列中无下载" => "Nothing downloading",
++        "暂无" => "Nothing here",
++        "未接管" => "Left to Browser",
++        "清除记录" => "Clear",
++        "{}   已交给浏览器下载   {}" => "{0}   left to the browser   {1}",
++        "移除记录" => "Remove",
++        "重新下载" => "Redownload",
++        "重试" => "Retry",
++        "打开所在文件夹" => "Open Containing Folder",
++        "错误详情" => "Error Details",
++        "删除" => "Remove",
++        "完成" => "Done",
++        "完成于 {}" => "Finished {0}",
++        "打开" => "Open",
++        "复制链接" => "Copy Link",
++        "详情" => "Details",
++        "关闭" => "Close",
++        "查看错误报告" => "View error report",
++        "大小" => "Size",
++        "未知" => "Unknown",
++        "已下载" => "Downloaded",
++        "速度" => "Speed",
++        "平均速度" => "Avg Speed",
++        "分段" => "Segments",
++        "支持，切分 {} 次" => "Supported ({0} splits)",
++        "不支持" => "Not supported",
++        "线路" => "Route",
++        "添加于" => "Added",
++        "保存到" => "Save to",
++        "链接" => "Link",
++        "下载服务器" => "Download Server",
++        "清空回收站" => "Empty Trash",
++        "只清空记录，保留文件" => "Clear records only, keep files",
++        "文件移到系统回收站" => "Move files to the system trash",
++        "彻底删除文件" => "Delete files permanently",
++        "回收站是空的" => "Trash is empty",
++        "保留文件" => "Files kept",
++        "文件在系统回收站" => "Files in system trash",
++        "文件已删除" => "Files deleted",
++        "{}   {}   {}删除" => "{0}   {1}   deleted {2}",
++        "恢复" => "Restore",
++        "无法恢复" => "Could not restore",
++        "彻底删除" => "Delete Permanently",
++        "安装插件之后，下载就放心交给 GaGaDown 吧！" => "Install the extension and leave your downloads to GaGaDown!",
++        "没有找到 Chrome 或 Edge" => "No Chrome or Edge installation found",
++        "打开插件文件夹" => "Open Extension Folder",
++        "已连接" => "Connected",
++        "未连接" => "Not connected",
++        "打开商店" => "Open Store",
++        "重新安装" => "Reinstall",
++        "安装插件" => "Install Extension",
++        "本机 API 配对码" => "Local API pairing code",
++        "复制" => "Copy",
++        "安装步骤" => "Setup steps",
++        "Flatpak 会调用系统默认浏览器；请确认打开的是 Chrome 或 Edge" => "Flatpak opens the system default browser — make sure it is Chrome or Edge",
++        "点“打开商店”前往 Chrome 网上应用店，安装后完成配对并启用" => "Click “Open Store” to visit the Chrome Web Store, then pair and enable the extension",
++        "点“安装插件”会打开浏览器，并复制好扩展页地址" => "Click “Install Extension” to open the browser; the extensions page address will be copied",
++        "在商店页面点击“添加至 Chrome”，并确认添加扩展程序" => "On the store page, click “Add to Chrome” and confirm adding the extension",
++        "在浏览器工具栏的扩展菜单中打开 GaGaDown" => "Open GaGaDown from the extensions menu in the browser toolbar",
++        "将上方配对码粘贴到扩展弹窗，点击“保存配对码”" => "Paste the pairing code above into the extension popup and click “Save pairing code”",
++        "阅读数据处理说明，勾选同意并点击“同意并启用”，确认权限" => "Read the data handling notice, agree, click “Agree & Enable”, and confirm the permissions",
++        "开发人员模式" => "Developer mode",
++        "开发者模式" => "Developer mode",
++        "加载解压缩的扩展" => "Load unpacked",
++        "加载未打包的扩展程序" => "Load unpacked",
++        "在浏览器地址栏粘贴 {} 并回车" => "Paste {0} into the address bar and press Enter",
++        "在扩展页打开“{}”开关" => "Turn on “{0}” on the extensions page",
++        "点击“{}”" => "Click “{0}”",
++        "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”" => "Copy the extension path below, paste it into the dialog's address bar, press Enter, then click “Select Folder”",
++        "在扩展弹出窗口粘贴上方配对码，并完成数据处理同意" => "Paste the pairing code above into the extension popup and complete the data handling consent",
++        "复制地址" => "Copy Address",
++        "已安装开发者版本？请先停用或移除旧插件，再安装商店版本并重新配对。" => "Running a dev build? Disable or remove the old extension first, then install the store version and pair again.",
++        "打开文件夹" => "Open Folder",
++        "安装成功，插件已连接" => "Installed — extension connected",
++        "等待插件连接…" => "Waiting for the extension to connect…",
++        "路径已复制" => "Path copied",
++        "地址已复制" => "Address copied",
++        "配对码已复制" => "Pairing code copied",
++        "刷新" => "Refresh",
++        "孤儿文件" => "Orphaned files",
++        "磁盘剩余" => "Free Space",
++        "清理孤儿文件" => "Clean orphan files",
++        "已释放 {}" => "Freed {0}",
++        "清理回收站缓存" => "Clean trash cache",
++        "移除文件丢失的任务 ({})" => "Remove tasks with missing files ({0})",
++        "孤儿" => "Orphan",
++        "关于" => "About",
++        "打开数据目录" => "Open data directory",
++        "设置、任务记录和日志都在这里" => "Settings, task records and logs live here",
++        "隐私政策" => "Privacy Policy",
++        "已完成 {} 个下载，共 {}" => "{0} downloads completed, {1} total",
++        "常规" => "General",
++        "开机自启" => "Launch at login",
++        "开机时静默启动" => "Start silently at login",
++        "开机自启时只在托盘运行，不弹出主窗口" => "Run in the tray without showing the main window when launching at login",
++        "下载目录" => "Download folder",
++        "更改" => "Change",
++        "缓存目录" => "Cache folder",
++        "默认" => "Default",
++        "同时下载任务" => "Concurrent downloads",
++        "超出的任务会排队" => "Tasks beyond this limit are queued",
++        "初始连接数" => "Initial connections",
++        "每个任务开始时的连接数" => "Connections per task at start",
++        "单任务最大连接数" => "Max connections per task",
++        "自动调节的上限" => "Upper limit for auto-tuning",
++        "全局最大连接数" => "Max total connections",
++        "所有任务合计" => "Across all tasks",
++        "最小分段" => "Min segment size",
++        "小于这个大小不再切分" => "Files smaller than this are not split",
++        "限速" => "Speed limit",
++        "0 为不限" => "0 for unlimited",
++        "分段重试次数" => "Segment retries",
++        "任务自动重试次数" => "Task auto-retries",
++        "代理模式" => "Proxy mode",
++        "代理地址" => "Proxy addresses",
++        "每行一个" => "One per line",
++        "自动探测本机代理" => "Auto-detect local proxies",
++        "扫描 Clash、v2rayN 等常用端口" => "Scan common ports used by Clash, v2rayN, etc.",
++        "使用系统代理" => "Use system proxy",
++        "直连等待" => "Direct-first wait",
++        "超时后同时尝试代理" => "Also try proxies after this delay",
++        "无" => "None",
++        "已发现代理" => "Detected proxies",
++        "浏览器" => "Browser",
++        "接管最小文件" => "Min takeover size",
++        "小于这个大小交给浏览器下载" => "Smaller files are left to the browser",
++        "本地端口" => "Local port",
++        "重启后生效" => "Takes effect after restart",
++        "清理" => "Cleanup",
++        "回收站保留" => "Keep trash for",
++        " 天" => " days",
++        "孤儿文件自动清理" => "Auto-clean orphan files",
++        "0 为不清理" => "0 to disable",
++        "完成后刷盘" => "Flush to disk on completion",
++        "确保文件完整写入磁盘" => "Ensure files are fully written to disk",
++        "错误报告" => "Error Report",
++        "复制报告" => "Copy Report",
++        "删除任务" => "Remove Task",
++        "开发预览任务没有真实文件，只会移除这条模拟记录。" => "Dev preview tasks have no real file; this only removes the mock record.",
++        "移除模拟任务" => "Remove mock task",
++        "只删除任务，保留文件" => "Remove task only, keep file",
++        "文件移到回收站" => "Move file to trash",
++        "移除预览" => "Remove Preview",
++        "取消" => "Cancel",
++        "大小未知" => "Unknown size",
++        "无法接管：{}" => "Could not take over: {0}",
++        "已交给浏览器继续下载" => "Left to the browser to continue",
++        "正在连接…" => "Connecting…",
++        "下载完成" => "Download complete",
++        "用时 {}" => "Took {0}",
++        "平均 {}" => "avg {0}",
++        "{}   剩余 {}   {} 连接" => "{0}   {1} left   {2} connections",
++        "{}   {} 连接" => "{0}   {1} connections",
++        "在主界面中显示" => "Show in Main Window",
++        "浏览器插件端口 {} 不可用：{}" => "Browser extension port {0} unavailable: {1}",
++        _ => zh,
++    }
++}
+diff --git a/crates/gagadown-core/Cargo.toml b/crates/gagadown-core/Cargo.toml
+index 96fbfa6..c768003 100644
+--- a/crates/gagadown-core/Cargo.toml
++++ b/crates/gagadown-core/Cargo.toml
+@@ -33,6 +33,7 @@ tracing = "0.1.44"
+ trash = "5.2.9"
+ url = "2.5.8"
+ uuid = { version = "1.27.0", features = ["v4", "serde"] }
++sys-locale = "0.3.2"
+ 
+ [target.'cfg(windows)'.dependencies]
+ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_IO", "Win32_System_Ioctl"] }
 diff --git a/crates/gagadown-core/src/api.rs b/crates/gagadown-core/src/api.rs
-index 8b287de..2ec7b4f 100644
+index 8b287de..d68e665 100644
 --- a/crates/gagadown-core/src/api.rs
 +++ b/crates/gagadown-core/src/api.rs
-@@ -26,22 +26,54 @@ fn origin_ok(o: &str) -> bool {
+@@ -1,6 +1,7 @@
+ //! Local HTTP API used by the browser extension. Bound to 127.0.0.1 only; requests that
+ //! carry a web-page Origin are refused so random sites can't push downloads.
+ use crate::engine::{Engine, PopupEvent};
++use crate::lang::{tr, trf};
+ use crate::probe::filename_from_url;
+ use crate::error::ErrorKind;
+ use crate::request::RequestSpec;
+@@ -26,22 +27,54 @@ fn origin_ok(o: &str) -> bool {
      })
  }
  
@@ -1061,7 +2446,50 @@ index 8b287de..2ec7b4f 100644
      next.run(req).await
  }
  
-@@ -252,7 +284,7 @@ pub async fn serve(engine: Engine, port: u16) -> std::io::Result<()> {
+@@ -89,7 +122,7 @@ async fn add(State(e): State<Engine>, Json(body): Json<BrowserAdd>) -> impl Into
+         let key = Uuid::new_v4();
+         let url = &body.req.url;
+         let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+-        let filename = body.req.filename.clone().filter(|s| !s.trim().is_empty()).or_else(|| filename_from_url(url)).unwrap_or_else(|| "下载".into());
++        let filename = body.req.filename.clone().filter(|s| !s.trim().is_empty()).or_else(|| filename_from_url(url)).unwrap_or_else(|| tr("下载").into());
+         e.push_popup(PopupEvent::Pending { key, filename, size: body.req.size_hint, host });
+         key
+     });
+@@ -118,8 +151,8 @@ fn unsupported_scheme(url: &str) -> Option<&'static str> {
+     let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase()).unwrap_or_default();
+     match scheme.as_str() {
+         "http" | "https" => None,
+-        "blob" => Some("这是网页播放器生成的视频流，没有可以直接下载的文件地址"),
+-        _ => Some("不支持这种链接，只能下载 http/https 地址"),
++        "blob" => Some(tr("这是网页播放器生成的视频流，没有可以直接下载的文件地址")),
++        _ => Some(tr("不支持这种链接，只能下载 http/https 地址")),
+     }
+ }
+ 
+@@ -172,18 +205,18 @@ async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
+         Ok(Err(err)) => {
+             // Let the browser keep the download: it owns the session state we could not replay.
+             let (reason, shown) = match err.kind {
+-                ErrorKind::Auth => ("auth", format!("服务器拒绝访问（{}）", err.message)),
+-                ErrorKind::NotFound => ("not_found", format!("文件不存在（{}）", err.message)),
++                ErrorKind::Auth => ("auth", trf("服务器拒绝访问（{0}）", &[&err.message])),
++                ErrorKind::NotFound => ("not_found", trf("文件不存在（{0}）", &[&err.message])),
+                 _ => ("probe_failed", err.message.clone()),
+             };
+             return fail(format!("{reason}: {}", err.message), shown, None);
+         }
+-        Err(_) => return fail("probe_timeout", format!("连接超时，{} 秒内服务器没有响应", PROBE_BUDGET.as_secs()), None),
++        Err(_) => return fail("probe_timeout", trf("连接超时，{0} 秒内服务器没有响应", &[&PROBE_BUDGET.as_secs()]), None),
+     };
+     let min = e.settings().takeover_min_size;
+     if crate::download::is_web_page(&probe) {
+         if body.force {
+-            return fail("web_page", "这个地址打开的是网页，不是文件", probe.size);
++            return fail("web_page", tr("这个地址打开的是网页，不是文件"), probe.size);
+         }
+         return reject("web_page", probe.size);
+     }
+@@ -252,7 +285,7 @@ pub async fn serve(engine: Engine, port: u16) -> std::io::Result<()> {
  
  #[cfg(test)]
  mod tests {
@@ -1070,7 +2498,7 @@ index 8b287de..2ec7b4f 100644
  
      #[test]
      fn accepts_only_extension_origins() {
-@@ -263,4 +295,41 @@ mod tests {
+@@ -263,4 +296,41 @@ mod tests {
          assert!(!origin_ok("chrome-extension://id/path"));
          assert!(!origin_ok("chrome-extension://"));
      }
@@ -1112,6 +2540,714 @@ index 8b287de..2ec7b4f 100644
 +        );
 +    }
  }
+diff --git a/crates/gagadown-core/src/config.rs b/crates/gagadown-core/src/config.rs
+index 1ffd307..b6f221c 100644
+--- a/crates/gagadown-core/src/config.rs
++++ b/crates/gagadown-core/src/config.rs
+@@ -1,3 +1,4 @@
++use crate::lang::tr;
+ use serde::{Deserialize, Serialize};
+ use std::path::PathBuf;
+ 
+@@ -21,10 +22,10 @@ impl ProxyMode {
+ 
+     pub fn label(self) -> &'static str {
+         match self {
+-            ProxyMode::DirectThenProxy => "默认直连，失败自动走代理",
+-            ProxyMode::DirectOnly => "仅直连",
+-            ProxyMode::ProxyThenDirect => "优先代理，失败回退直连",
+-            ProxyMode::ProxyOnly => "仅代理",
++            ProxyMode::DirectThenProxy => tr("默认直连，失败自动走代理"),
++            ProxyMode::DirectOnly => tr("仅直连"),
++            ProxyMode::ProxyThenDirect => tr("优先代理，失败回退直连"),
++            ProxyMode::ProxyOnly => tr("仅代理"),
+         }
+     }
+ }
+diff --git a/crates/gagadown-core/src/download.rs b/crates/gagadown-core/src/download.rs
+index a94bf8d..83a4029 100644
+--- a/crates/gagadown-core/src/download.rs
++++ b/crates/gagadown-core/src/download.rs
+@@ -3,6 +3,7 @@
+ //! mid-flight route failover, finalisation.
+ use crate::engine::{Inner, TaskEntry};
+ use crate::error::{DlError, DlResult, ErrorKind};
++use crate::lang::{tr, trf};
+ use crate::probe::{parse_content_range, retry_after, sanitize_filename};
+ use crate::route::Route;
+ use crate::segments::Table;
+@@ -223,7 +224,7 @@ pub async fn run(inner: Arc<Inner>, entry: Arc<TaskEntry>, sh: Arc<Shared>) -> D
+     loop {
+         match run_once(&inner, &entry, &sh, force_single).await {
+             Err(e) if e.kind == ErrorKind::RangeUnsupported && !force_single && !sh.cancel.is_cancelled() => {
+-                entry.log("服务器分段异常，切换单线程");
++                entry.log(tr("服务器分段异常，切换单线程"));
+                 force_single = true;
+                 *sh.fatal.lock() = None;
+                 entry.with(|r| {
+@@ -232,7 +233,7 @@ pub async fn run(inner: Arc<Inner>, entry: Arc<TaskEntry>, sh: Arc<Shared>) -> D
+                 });
+             }
+             Err(e) if e.kind == ErrorKind::ResourceChanged && !sh.cancel.is_cancelled() && sh.retries.fetch_add(1, Ordering::Relaxed) < 2 => {
+-                entry.log("远端文件已变化，重新下载");
++                entry.log(tr("远端文件已变化，重新下载"));
+                 *sh.fatal.lock() = None;
+                 entry.with(|r| {
+                     r.remaining = None;
+@@ -257,9 +258,10 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>,
+         _ = sh.cancel.cancelled() => return Err(DlError::cancelled()),
+     };
+     *sh.route.write() = Some(route.clone());
+-    entry.log(format!("线路 {}，响应 {} ms", route.name, info.latency_ms));
++    entry.with(|r| r.route_latency_ms = Some(info.latency_ms));
++    entry.log(trf("线路 {0}，响应 {1} ms", &[&route.name, &info.latency_ms]));
+     if rec.size.is_none() && is_web_page(&info) {
+-        return Err(DlError { status: Some(info.status), ..DlError::new(ErrorKind::NotDownload, "服务器返回的是网页，不是文件") });
++        return Err(DlError { status: Some(info.status), ..DlError::new(ErrorKind::NotDownload, tr("服务器返回的是网页，不是文件")) });
+     }
+ 
+     let ranges = info.ranges && !force_single && info.size.unwrap_or(0) > 0;
+@@ -305,7 +307,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>,
+         (path, part)
+     };
+     if changed {
+-        entry.log("远端文件已变化，从头下载");
++        entry.log(tr("远端文件已变化，从头下载"));
+     }
+     if let Some(dir) = final_path.parent() {
+         std::fs::create_dir_all(dir)?;
+@@ -320,7 +322,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>,
+     if let Some(dir) = final_path.parent() {
+         if let Ok(avail) = fs4::available_space(dir) {
+             if avail < need + 16 * 1024 * 1024 {
+-                return Err(DlError::new(ErrorKind::DiskFull, format!("需要 {} MB，可用 {} MB", need >> 20, avail >> 20)));
++                return Err(DlError::new(ErrorKind::DiskFull, trf("需要 {0} MB，可用 {1} MB", &[&(need >> 20), &(avail >> 20)])));
+             }
+         }
+     }
+@@ -352,7 +354,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>,
+     .await
+     .map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))??;
+     if sh.cancel.is_cancelled() {
+-        return Err(DlError::new(ErrorKind::Cancelled, "下载已停止"));
++        return Err(DlError::new(ErrorKind::Cancelled, tr("下载已停止")));
+     }
+     let file = Arc::new(file);
+     let validator = info.etag.clone().or(info.last_modified.clone());
+@@ -449,11 +451,11 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>,
+         let p = final_path.clone();
+         let got = tokio::task::spawn_blocking(move || sha256_file(&p)).await.map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))??;
+         if !got.eq_ignore_ascii_case(expect.trim()) {
+-            entry.log(format!("SHA-256 不一致: {got}"));
++            entry.log(trf("SHA-256 不一致: {0}", &[&got]));
+             let _ = std::fs::remove_file(&final_path);
+-            return Err(DlError::new(ErrorKind::ResourceChanged, "校验失败"));
++            return Err(DlError::new(ErrorKind::ResourceChanged, tr("校验失败")));
+         }
+-        entry.log("SHA-256 校验通过");
++        entry.log(tr("SHA-256 校验通过"));
+     }
+     Ok(Outcome { final_path, size })
+ }
+@@ -662,7 +664,7 @@ async fn segmented(ctx: Arc<Ctx>, cap: usize, host: String) -> DlResult<()> {
+     }
+     let complete = sh.table.lock().as_ref().map(|t| t.complete()).unwrap_or(false);
+     if !complete {
+-        return Err(DlError::new(ErrorKind::Network, "部分分段未完成"));
++        return Err(DlError::new(ErrorKind::Network, tr("部分分段未完成")));
+     }
+     Ok(())
+ }
+@@ -699,7 +701,7 @@ async fn failover(ctx: &Ctx) {
+     let url = ctx.urls[0].clone();
+     if let Ok((r, _)) = ctx.inner.routes.resolve(&ctx.spec, &url, &ctx.ua, Some(&cur)).await {
+         if r.name != cur {
+-            ctx.log(format!("线路切换 {cur} -> {}", r.name));
++            ctx.log(trf("线路切换 {0} -> {1}", &[&cur, &r.name]));
+             ctx.entry.with(|rec| rec.route = Some(r.name.clone()));
+             *ctx.sh.route.write() = Some(r);
+             ctx.sh.route_errors.store(0, Ordering::Relaxed);
+@@ -765,7 +767,7 @@ async fn worker(ctx: Arc<Ctx>, wid: u32) -> bool {
+                     }
+                     return false;
+                 }
+-                ctx.log(format!("连接 #{wid} {}，第 {attempt} 次重试", e.kind.label()));
++                ctx.log(trf("连接 #{0} {1}，第 {2} 次重试", &[&wid, &e.kind.label(), &attempt]));
+                 tokio::select! {
+                     _ = tokio::time::sleep(backoff(attempt, e.retry_after)) => {}
+                     _ = sh.cancel.cancelled() => return false,
+@@ -818,7 +820,7 @@ async fn segment(ctx: &Ctx, idx: usize, wid: u32, buf: &mut Vec<u8>) -> DlResult
+     let resp = tokio::select! {
+         r = tokio::time::timeout(Duration::from_secs(25), req.send()) => match r {
+             Ok(r) => r?,
+-            Err(_) => return Err(DlError::new(ErrorKind::Timeout, "等待响应超时")),
++            Err(_) => return Err(DlError::new(ErrorKind::Timeout, tr("等待响应超时"))),
+         },
+         _ = sh.cancel.cancelled() => return Err(DlError::cancelled()),
+     };
+@@ -828,15 +830,15 @@ async fn segment(ctx: &Ctx, idx: usize, wid: u32, buf: &mut Vec<u8>) -> DlResult
+             let cr = resp.headers().get(reqwest::header::CONTENT_RANGE).and_then(|v| v.to_str().ok()).and_then(parse_content_range);
+             if let Some((a, _, _)) = cr {
+                 if a != start {
+-                    return Err(DlError::new(ErrorKind::RangeUnsupported, format!("Content-Range 起点 {a} != {start}")));
++                    return Err(DlError::new(ErrorKind::RangeUnsupported, trf("Content-Range 起点 {0} != {1}", &[&a, &start])));
+                 }
+             }
+         }
+         200 => {
+             return Err(if ctx.validator.is_some() {
+-                DlError::new(ErrorKind::ResourceChanged, "If-Range 未命中")
++                DlError::new(ErrorKind::ResourceChanged, tr("If-Range 未命中"))
+             } else {
+-                DlError::new(ErrorKind::RangeUnsupported, "服务器忽略 Range")
++                DlError::new(ErrorKind::RangeUnsupported, tr("服务器忽略 Range"))
+             });
+         }
+         s => return Err(DlError::from_status(s, retry_after(resp.headers()))),
+@@ -865,14 +867,14 @@ async fn segment(ctx: &Ctx, idx: usize, wid: u32, buf: &mut Vec<u8>) -> DlResult
+                 }
+                 if idle >= STALL_TIMEOUT {
+                     flush(ctx, idx, buf, &mut off).await?;
+-                    return Err(DlError::new(ErrorKind::Timeout, "读取超时"));
++                    return Err(DlError::new(ErrorKind::Timeout, tr("读取超时")));
+                 }
+                 continue;
+             }
+             Ok(None) => {
+                 flush(ctx, idx, buf, &mut off).await?;
+                 let complete = sh.table.lock().as_ref().map(|t| t.segs[idx].finished()).unwrap_or(false);
+-                return if complete || (req_end < end && off >= req_end) { Ok(()) } else { Err(DlError::new(ErrorKind::Network, "连接提前关闭")) };
++                return if complete || (req_end < end && off >= req_end) { Ok(()) } else { Err(DlError::new(ErrorKind::Network, tr("连接提前关闭"))) };
+             }
+             Ok(Some(Err(e))) => {
+                 flush(ctx, idx, buf, &mut off).await?;
+@@ -948,7 +950,7 @@ async fn single_stream(ctx: Arc<Ctx>, size: Option<u64>) -> DlResult<u64> {
+                 && st == 206
+                 && resp.headers().get(reqwest::header::CONTENT_RANGE).and_then(|v| v.to_str().ok()).and_then(parse_content_range).is_some_and(|(a, _, _)| a == have);
+             if have > 0 {
+-                ctx.log(if resumed { format!("从 {:.1} MB 处续传", have as f64 / 1048576.0) } else { "服务器不支持续传，从头下载".into() });
++                ctx.log(if resumed { trf("从 {0} MB 处续传", &[&format!("{:.1}", have as f64 / 1048576.0)]) } else { tr("服务器不支持续传，从头下载").into() });
+             }
+             if !resumed {
+                 have = 0;
+@@ -969,7 +971,7 @@ async fn single_stream(ctx: Arc<Ctx>, size: Option<u64>) -> DlResult<u64> {
+                     _ = sh.cancel.cancelled() => break Err(DlError::cancelled()),
+                 };
+                 let chunk = match next {
+-                    Err(_) => break Err(DlError::new(ErrorKind::Timeout, "读取超时")),
++                    Err(_) => break Err(DlError::new(ErrorKind::Timeout, tr("读取超时"))),
+                     Ok(None) => break Ok(()),
+                     Ok(Some(Err(e))) => break Err(DlError::from_reqwest(&e)),
+                     Ok(Some(Ok(b))) => b,
+@@ -986,7 +988,7 @@ async fn single_stream(ctx: Arc<Ctx>, size: Option<u64>) -> DlResult<u64> {
+             let off = have;
+             if let Some(s) = size {
+                 if off != s {
+-                    return Err(DlError::new(ErrorKind::Network, format!("长度不符 {off}/{s}")));
++                    return Err(DlError::new(ErrorKind::Network, trf("长度不符 {0}/{1}", &[&off, &s])));
+                 }
+             }
+             if let Some(t) = sh.table.lock().as_mut() {
+@@ -1009,7 +1011,7 @@ async fn single_stream(ctx: Arc<Ctx>, size: Option<u64>) -> DlResult<u64> {
+                 if e.kind.route_related() && attempt % 2 == 0 {
+                     failover(&ctx).await;
+                 }
+-                ctx.log(format!("{}，第 {attempt} 次重试", e.kind.label()));
++                ctx.log(trf("{0}，第 {1} 次重试", &[&e.kind.label(), &attempt]));
+                 tokio::select! {
+                     _ = tokio::time::sleep(backoff(attempt, e.retry_after)) => {}
+                     _ = sh.cancel.cancelled() => return Err(DlError::cancelled()),
+diff --git a/crates/gagadown-core/src/engine.rs b/crates/gagadown-core/src/engine.rs
+index a00bf8d..1dc3e85 100644
+--- a/crates/gagadown-core/src/engine.rs
++++ b/crates/gagadown-core/src/engine.rs
+@@ -1,6 +1,7 @@
+ use crate::config::Settings;
+ use crate::download::{self, part_path, Shared, PART_EXT};
+ use crate::error::{DlError, DlResult, ErrorKind};
++use crate::lang::{tr, trf};
+ use crate::limiter::Limiter;
+ use crate::probe::{sanitize_filename, ProbeInfo};
+ use crate::request::RequestSpec;
+@@ -192,7 +193,7 @@ impl Inner {
+                 r.next_retry_at = None;
+                 let name = r.filename.clone();
+                 drop(r);
+-                self.notify(format!("下载完成 {name}"));
++                self.notify(trf("下载完成 {0}", &[&name]));
+             }
+             Err(e) if e.kind == ErrorKind::Cancelled || reason != StopReason::None as u8 => {
+                 r.status = if reason == StopReason::Shutdown as u8 { Status::Queued } else { Status::Paused };
+@@ -208,11 +209,11 @@ impl Inner {
+                     r.next_retry_at = None;
+                 }
+                 let reason = crate::error::summary(e.kind, e.status, &e.message);
+-                let line = format!("失败: {reason}");
++                let line = trf("失败: {0}", &[&reason]);
+                 r.log.push(LogLine { at: now_secs(), text: line });
+                 let name = r.filename.clone();
+                 drop(r);
+-                self.notify(format!("下载失败 {name}: {reason}"));
++                self.notify(trf("下载失败 {0}: {1}", &[&name, &reason]));
+             }
+         }
+         *entry.run.lock() = None;
+@@ -258,22 +259,22 @@ impl Engine {
+             .create(true).truncate(false).read(true).write(true)
+             .open(data_dir.join("engine.lock"))?;
+         fs4::FileExt::try_lock(&instance_lock)
+-            .map_err(|e| DlError::new(ErrorKind::AlreadyRunning, format!("GaGaDown 已在运行：{e}")))?;
++            .map_err(|e| DlError::new(ErrorKind::AlreadyRunning, trf("GaGaDown 已在运行：{0}", &[&e])))?;
+         let state_cipher = crate::secure_state::StateCipher::load_or_create()
+-            .map_err(|e| DlError::new(ErrorKind::Io, format!("无法安全访问系统密钥环，GaGaDown 未读取任务记录：{e}")))?;
++            .map_err(|e| DlError::new(ErrorKind::Io, trf("无法安全访问系统密钥环，GaGaDown 未读取任务记录：{0}", &[&e])))?;
+         let api_token = crate::secure_state::load_or_create_api_token()
+-            .map_err(|e| DlError::new(ErrorKind::Io, format!("无法创建浏览器插件配对密钥：{e}")))?;
++            .map_err(|e| DlError::new(ErrorKind::Io, trf("无法创建浏览器插件配对密钥：{0}", &[&e])))?;
+         let settings: Settings = read_json::<Settings>(&data_dir.join("settings.json")).unwrap_or_default().sanitized();
+         let state_path = data_dir.join("state.json");
+         let state: State = if state_path.exists() {
+             let stored = std::fs::read(&state_path)?;
+             let (plain, encrypted) = state_cipher.decrypt_or_legacy(&stored)
+-                .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录解密失败：{e}")))?;
++                .map_err(|e| DlError::new(ErrorKind::Io, trf("任务记录解密失败：{0}", &[&e])))?;
+             let state: State = serde_json::from_slice(&plain)
+-                .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录格式无效：{e}")))?;
++                .map_err(|e| DlError::new(ErrorKind::Io, trf("任务记录格式无效：{0}", &[&e])))?;
+             if !encrypted {
+                 let ciphered = state_cipher.encrypt(&plain)
+-                    .map_err(|e| DlError::new(ErrorKind::Io, format!("无法加密旧任务记录：{e}")))?;
++                    .map_err(|e| DlError::new(ErrorKind::Io, trf("无法加密旧任务记录：{0}", &[&e])))?;
+                 atomic_write(&state_path, &ciphered)?;
+             }
+             state
+@@ -457,7 +458,7 @@ impl Engine {
+                         r.next_retry_at = None;
+                         r.auto_retries += 1;
+                         r.status = Status::Queued;
+-                        let line = format!("自动重试（第 {} 次）", r.auto_retries);
++                        let line = trf("自动重试（第 {0} 次）", &[&r.auto_retries]);
+                         r.log.push(LogLine { at: now, text: line });
+                     }
+                 }
+@@ -506,7 +507,7 @@ impl Engine {
+         let st = State { tasks, deleted };
+         let plain = serde_json::to_vec(&st).map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))?;
+         let data = self.inner.state_cipher.encrypt(&plain)
+-            .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录加密失败：{e}")))?;
++            .map_err(|e| DlError::new(ErrorKind::Io, trf("任务记录加密失败：{0}", &[&e])))?;
+         atomic_write(&self.inner.data_dir.join("state.json"), &data)?;
+         let hosts = self.inner.routes.hosts.lock().clone();
+         let data = serde_json::to_vec(&hosts).unwrap_or_default();
+@@ -549,9 +550,9 @@ impl Engine {
+ 
+     pub fn add(&self, req: AddRequest, probe: Option<&ProbeInfo>) -> DlResult<AddOutcome> {
+         let url = req.url.trim().to_string();
+-        let parsed = url::Url::parse(&url).map_err(|e| DlError::new(ErrorKind::Other, format!("链接无效: {e}")))?;
++        let parsed = url::Url::parse(&url).map_err(|e| DlError::new(ErrorKind::Other, trf("链接无效: {0}", &[&e])))?;
+         if !matches!(parsed.scheme(), "http" | "https") {
+-            return Err(DlError::new(ErrorKind::Other, "只支持 http/https 链接"));
++            return Err(DlError::new(ErrorKind::Other, tr("只支持 http/https 链接")));
+         }
+         let filename = req
+             .filename
+@@ -595,7 +596,7 @@ impl Engine {
+                     r.status = Status::Queued;
+                     r.error = None;
+                     r.auto_retries = 0;
+-                    r.log.push(LogLine { at: now_secs(), text: "已从浏览器续上新链接".into() });
++                    r.log.push(LogLine { at: now_secs(), text: tr("已从浏览器续上新链接").into() });
+                     self.inner.dirty.store(true, Ordering::Relaxed);
+                     return Ok(AddOutcome { id: r.id, existed: true, refreshed: true, filename: r.filename.clone() });
+                 }
+@@ -625,6 +626,7 @@ impl Engine {
+             finished_at: None,
+             sha256: req.sha256.clone(),
+             route: probe.map(|p| p.route.clone()),
++            route_latency_ms: probe.map(|p| p.latency_ms),
+             elapsed_secs: 0.0,
+             source: req.source.clone().unwrap_or_else(|| "manual".into()),
+             log: Vec::new(),
+@@ -727,7 +729,7 @@ impl Engine {
+             // Never detach a run and then unlink its open file. Preallocation
+             // and blocking writes must finish before Windows can reclaim it.
+             if tokio::time::timeout(Duration::from_secs(10), &mut j).await.is_err() {
+-                self.inner.notify("正在等待磁盘操作结束，结束后将自动继续；无需再次点击");
++                self.inner.notify(tr("正在等待磁盘操作结束，结束后将自动继续；无需再次点击"));
+                 let _ = j.await;
+             }
+         }
+@@ -746,8 +748,8 @@ impl Engine {
+         };
+         self.inner.dirty.store(true, Ordering::Relaxed);
+         let reattach = |why: String| {
+-            t.log(format!("删除失败，已恢复任务以便重试: {why}"));
+-            self.inner.notify(format!("删除失败: {why}"));
++            t.log(trf("删除失败，已恢复任务以便重试: {0}", &[&why]));
++            self.inner.notify(trf("删除失败: {0}", &[&why]));
+             let mut tasks = self.inner.tasks.write();
+             let i = slot.min(tasks.len());
+             tasks.insert(i, t.clone());
+@@ -757,7 +759,7 @@ impl Engine {
+         };
+         let _operation = t.operation.lock().await;
+         if !self.stop_and_wait(&t, StopReason::Remove).await {
+-            reattach("任务仍在运行".into());
++            reattach(tr("任务仍在运行").into());
+             return;
+         }
+         let rec = t.persistable();
+@@ -822,7 +824,7 @@ impl Engine {
+             }
+             rec.status = Status::Paused;
+         }
+-        rec.log.push(LogLine { at: now_secs(), text: "已从最近删除恢复".into() });
++        rec.log.push(LogLine { at: now_secs(), text: tr("已从最近删除恢复").into() });
+         self.inner.tasks.write().insert(0, Arc::new(TaskEntry { rec: Mutex::new(rec), run: Mutex::new(None), operation: tokio::sync::Mutex::new(()) }));
+         self.inner.dirty.store(true, Ordering::Relaxed);
+         true
+@@ -1049,6 +1051,7 @@ fn view_of(t: &Arc<TaskEntry>, seg_detail: usize) -> TaskView {
+         splits: 0,
+         history: Vec::new(),
+         route: r.route.clone(),
++        route_latency_ms: r.route_latency_ms,
+         created_at: r.created_at,
+         finished_at: r.finished_at,
+         next_retry_at: r.next_retry_at,
+diff --git a/crates/gagadown-core/src/error.rs b/crates/gagadown-core/src/error.rs
+index 860fdcc..8ec7cf2 100644
+--- a/crates/gagadown-core/src/error.rs
++++ b/crates/gagadown-core/src/error.rs
+@@ -1,3 +1,4 @@
++use crate::lang::{tr, trf};
+ use serde::{Deserialize, Serialize};
+ use std::time::Duration;
+ 
+@@ -44,21 +45,21 @@ impl ErrorKind {
+ 
+     pub fn label(self) -> &'static str {
+         match self {
+-            ErrorKind::Network => "网络连接失败",
+-            ErrorKind::Timeout => "连接超时",
+-            ErrorKind::Tls => "TLS 握手失败",
+-            ErrorKind::ServerBusy => "服务器限流",
+-            ErrorKind::ServerError => "服务器错误",
+-            ErrorKind::Auth => "认证失败或链接已过期",
+-            ErrorKind::NotFound => "文件不存在",
+-            ErrorKind::RangeUnsupported => "服务器不支持分段",
+-            ErrorKind::ResourceChanged => "远端文件已变化",
+-            ErrorKind::DiskFull => "磁盘空间不足",
+-            ErrorKind::Io => "文件读写错误",
+-            ErrorKind::Cancelled => "已取消",
+-            ErrorKind::NotDownload => "不是下载链接",
+-            ErrorKind::AlreadyRunning => "GaGaDown 已在运行",
+-            ErrorKind::Other => "未知错误",
++            ErrorKind::Network => tr("网络连接失败"),
++            ErrorKind::Timeout => tr("连接超时"),
++            ErrorKind::Tls => tr("TLS 握手失败"),
++            ErrorKind::ServerBusy => tr("服务器限流"),
++            ErrorKind::ServerError => tr("服务器错误"),
++            ErrorKind::Auth => tr("认证失败或链接已过期"),
++            ErrorKind::NotFound => tr("文件不存在"),
++            ErrorKind::RangeUnsupported => tr("服务器不支持分段"),
++            ErrorKind::ResourceChanged => tr("远端文件已变化"),
++            ErrorKind::DiskFull => tr("磁盘空间不足"),
++            ErrorKind::Io => tr("文件读写错误"),
++            ErrorKind::Cancelled => tr("已取消"),
++            ErrorKind::NotDownload => tr("不是下载链接"),
++            ErrorKind::AlreadyRunning => tr("GaGaDown 已在运行"),
++            ErrorKind::Other => tr("未知错误"),
+         }
+     }
+ }
+@@ -89,19 +90,19 @@ pub fn brief(message: &str) -> Option<&'static str> {
+     ]
+     .iter()
+     .find(|(k, _)| m.contains(k))
+-    .map(|x| x.1)
++    .map(|x| tr(x.1))
+ }
+ 
+ /// One-line reason for lists and notifications, e.g. `服务器错误（HTTP 502）`.
+ pub fn summary(kind: ErrorKind, status: Option<u16>, message: &str) -> String {
+     if let Some(s) = status {
+-        return format!("{}（HTTP {s}）", kind.label());
++        return trf("{0}（HTTP {1}）", &[&kind.label(), &s]);
+     }
+     if kind == ErrorKind::Other && !message.is_empty() {
+         return message.to_string();
+     }
+     match brief(message) {
+-        Some(b) if b != kind.label() => format!("{}（{b}）", kind.label()),
++        Some(b) if b != kind.label() => trf("{0}（{1}）", &[&kind.label(), &b]),
+         _ => kind.label().to_string(),
+     }
+ }
+diff --git a/crates/gagadown-core/src/lang.rs b/crates/gagadown-core/src/lang.rs
+new file mode 100644
+index 0000000..b030235
+--- /dev/null
++++ b/crates/gagadown-core/src/lang.rs
+@@ -0,0 +1,145 @@
++//! Minimal bilingual UI strings: Simplified Chinese plus English.
++//!
++//! Call sites keep the Chinese literal as the lookup key — `tr("下载")` —
++//! so the diff stays mechanical. `tr` returns the Chinese text on zh
++//! locales and the English entry on any other locale; missing entries
++//! fall back to the key itself, so the table can grow incrementally.
++
++use std::sync::OnceLock;
++
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Lang {
++    Zh,
++    En,
++}
++
++static LANG: OnceLock<Lang> = OnceLock::new();
++
++pub fn lang() -> Lang {
++    *LANG.get_or_init(|| match sys_locale::get_locale() {
++        Some(l) if l.to_lowercase().starts_with("zh") => Lang::Zh,
++        _ => Lang::En,
++    })
++}
++
++/// Translate a user-facing string. `zh` doubles as the lookup key.
++pub fn tr(zh: &'static str) -> &'static str {
++    match lang() {
++        Lang::Zh => zh,
++        Lang::En => en(zh),
++    }
++}
++
++/// Translate a template and substitute `{0}`, `{1}`, … with the matching
++/// `args` entry, so English word order may differ from the Chinese key.
++/// Pre-render non-`Display` formatting (e.g. `format!("{:.1}", v)`) and
++/// pass the result — `{i:spec}` is not supported.
++pub fn trf(zh: &'static str, args: &[&dyn std::fmt::Display]) -> String {
++    let mut s = tr(zh).to_string();
++    for (i, a) in args.iter().enumerate() {
++        let indexed = format!("{{{i}}}");
++        if s.contains(&indexed) {
++            s = s.replace(&indexed, &a.to_string());
++        } else {
++            s = s.replacen("{}", &a.to_string(), 1);
++        }
++    }
++    s
++}
++
++fn en(zh: &'static str) -> &'static str {
++    match zh {
++        // error.rs — ErrorKind::label
++        "网络连接失败" => "Network connection failed",
++        "连接超时" => "Connection timed out",
++        "TLS 握手失败" => "TLS handshake failed",
++        "服务器限流" => "Server rate-limited",
++        "服务器错误" => "Server error",
++        "认证失败或链接已过期" => "Authentication failed or link expired",
++        "文件不存在" => "File not found",
++        "服务器不支持分段" => "Server does not support ranges",
++        "远端文件已变化" => "Remote file changed",
++        "磁盘空间不足" => "Not enough disk space",
++        "文件读写错误" => "File I/O error",
++        "已取消" => "Cancelled",
++        "不是下载链接" => "Not a download link",
++        "GaGaDown 已在运行" => "GaGaDown is already running",
++        "未知错误" => "Unknown error",
++        // error.rs — brief()
++        "域名解析失败" => "DNS resolution failed",
++        "连接被拒绝" => "Connection refused",
++        "连接被重置" => "Connection reset",
++        "证书无效" => "Invalid certificate",
++        "连接意外断开" => "Connection closed unexpectedly",
++        // error.rs — summary() templates
++        "{0}（HTTP {1}）" => "{0} (HTTP {1})",
++        "{0}（{1}）" => "{0} ({1})",
++        // config.rs — ProxyMode::label
++        "默认直连，失败自动走代理" => "Direct first, fall back to proxy on failure",
++        "仅直连" => "Direct only",
++        "优先代理，失败回退直连" => "Proxy first, fall back to direct on failure",
++        "仅代理" => "Proxy only",
++        // route.rs — route names and errors
++        "直连" => "Direct",
++        "代理地址无效 {0}: {1}" => "Invalid proxy address {0}: {1}",
++        "代理 {0}" => "Proxy {0}",
++        "本机代理 {0}" => "Local proxy {0}",
++        "环境变量代理 {0}" => "Env proxy {0}",
++        "系统代理" => "System proxy",
++        "没有可用线路（仅代理模式但未配置或探测到代理）" => "No route available (proxy-only mode with no proxy configured or detected)",
++        "没有可用线路" => "No route available",
++        // api.rs — browser hand-off messages
++        "下载" => "download",
++        "这是网页播放器生成的视频流，没有可以直接下载的文件地址" => "This is a video stream generated by the web player; there is no direct file URL to download",
++        "不支持这种链接，只能下载 http/https 地址" => "Unsupported link; only http/https URLs can be downloaded",
++        "服务器拒绝访问（{0}）" => "Server refused access ({0})",
++        "文件不存在（{0}）" => "File not found ({0})",
++        "连接超时，{0} 秒内服务器没有响应" => "Connection timed out: no server response within {0} seconds",
++        "这个地址打开的是网页，不是文件" => "This URL opens a web page, not a file",
++        // download.rs — log lines and errors
++        "服务器分段异常，切换单线程" => "Server range handling failed; switching to a single connection",
++        "远端文件已变化，重新下载" => "Remote file changed; restarting the download",
++        "线路 {0}，响应 {1} ms" => "Route {0}, response {1} ms",
++        "服务器返回的是网页，不是文件" => "Server returned a web page, not a file",
++        "远端文件已变化，从头下载" => "Remote file changed; restarting from the beginning",
++        "需要 {0} MB，可用 {1} MB" => "Need {0} MB, only {1} MB available",
++        "下载已停止" => "Download stopped",
++        "SHA-256 不一致: {0}" => "SHA-256 mismatch: {0}",
++        "校验失败" => "Checksum failed",
++        "SHA-256 校验通过" => "SHA-256 verified",
++        "部分分段未完成" => "Some segments did not finish",
++        "线路切换 {0} -> {1}" => "Route switched {0} -> {1}",
++        "连接 #{0} {1}，第 {2} 次重试" => "Connection #{0}: {1}; retry {2}",
++        "等待响应超时" => "Timed out waiting for a response",
++        "Content-Range 起点 {0} != {1}" => "Content-Range starts at {0}, expected {1}",
++        "If-Range 未命中" => "If-Range check failed",
++        "服务器忽略 Range" => "Server ignored the Range header",
++        "读取超时" => "Read timed out",
++        "连接提前关闭" => "Connection closed early",
++        "从 {0} MB 处续传" => "Resuming at {0} MB",
++        "服务器不支持续传，从头下载" => "Server does not support resume; starting over",
++        "长度不符 {0}/{1}" => "Length mismatch {0}/{1}",
++        "{0}，第 {1} 次重试" => "{0}; retry {1}",
++        // engine.rs — notices, log lines and errors
++        "下载完成 {0}" => "Download complete: {0}",
++        "失败: {0}" => "Failed: {0}",
++        "下载失败 {0}: {1}" => "Download failed {0}: {1}",
++        "GaGaDown 已在运行：{0}" => "GaGaDown is already running: {0}",
++        "无法安全访问系统密钥环，GaGaDown 未读取任务记录：{0}" => "Could not access the system keyring securely; GaGaDown did not read task records: {0}",
++        "无法创建浏览器插件配对密钥：{0}" => "Could not create the browser extension pairing key: {0}",
++        "任务记录解密失败：{0}" => "Failed to decrypt task records: {0}",
++        "任务记录格式无效：{0}" => "Invalid task record format: {0}",
++        "无法加密旧任务记录：{0}" => "Could not encrypt legacy task records: {0}",
++        "自动重试（第 {0} 次）" => "Auto-retry (attempt {0})",
++        "任务记录加密失败：{0}" => "Failed to encrypt task records: {0}",
++        "链接无效: {0}" => "Invalid URL: {0}",
++        "只支持 http/https 链接" => "Only http/https URLs are supported",
++        "已从浏览器续上新链接" => "Refreshed the link from the browser",
++        "正在等待磁盘操作结束，结束后将自动继续；无需再次点击" => "Waiting for disk operations to finish; will continue automatically — no need to click again",
++        "删除失败，已恢复任务以便重试: {0}" => "Delete failed; the task was restored for retry: {0}",
++        "删除失败: {0}" => "Delete failed: {0}",
++        "任务仍在运行" => "Task is still running",
++        "已从最近删除恢复" => "Restored from recently deleted",
++        _ => zh,
++    }
++}
+diff --git a/crates/gagadown-core/src/lib.rs b/crates/gagadown-core/src/lib.rs
+index 23ef476..a62e4e4 100644
+--- a/crates/gagadown-core/src/lib.rs
++++ b/crates/gagadown-core/src/lib.rs
+@@ -3,6 +3,7 @@ pub mod config;
+ pub mod download;
+ pub mod engine;
+ pub mod error;
++pub mod lang;
+ pub mod limiter;
+ pub mod probe;
+ pub mod request;
+diff --git a/crates/gagadown-core/src/route.rs b/crates/gagadown-core/src/route.rs
+index ecdff8b..b226ac8 100644
+--- a/crates/gagadown-core/src/route.rs
++++ b/crates/gagadown-core/src/route.rs
+@@ -2,6 +2,7 @@
+ //! the winner is cached per host, and running tasks can hop routes when one goes bad.
+ use crate::config::{ProxyMode, ProxySettings};
+ use crate::error::{DlError, DlResult, ErrorKind};
++use crate::lang::{tr, trf};
+ use crate::probe::{probe, ProbeInfo};
+ use crate::request::RequestSpec;
+ use futures_util::stream::{FuturesUnordered, StreamExt};
+@@ -46,7 +47,7 @@ pub fn build_client(proxy: Option<&str>, system: bool) -> DlResult<reqwest::Clie
+         .redirect(reqwest::redirect::Policy::limited(20));
+     match proxy {
+         Some(p) => {
+-            let px = reqwest::Proxy::all(p).map_err(|e| DlError::new(ErrorKind::Other, format!("代理地址无效 {p}: {e}")))?;
++            let px = reqwest::Proxy::all(p).map_err(|e| DlError::new(ErrorKind::Other, trf("代理地址无效 {0}: {1}", &[&p, &e])))?;
+             b = b.proxy(px);
+         }
+         None if !system => b = b.no_proxy(),
+@@ -117,7 +118,7 @@ impl RouteManager {
+ 
+     fn rebuild(&self) -> DlResult<()> {
+         let s = self.settings.read().clone();
+-        let mut out = vec![Arc::new(Route { name: DIRECT.into(), proxy: None, client: build_client(None, false)? })];
++        let mut out = vec![Arc::new(Route { name: tr(DIRECT).into(), proxy: None, client: build_client(None, false)? })];
+         let mut seen: Vec<String> = Vec::new();
+         let mut push = |name: String, p: Option<String>, system: bool, out: &mut Vec<Arc<Route>>| {
+             let key = p.clone().unwrap_or_else(|| name.clone());
+@@ -134,19 +135,19 @@ impl RouteManager {
+         };
+         for p in s.proxies.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+             let p = if p.contains("://") { p.to_string() } else { format!("http://{p}") };
+-            push(format!("代理 {}", display_proxy(&p)), Some(p), false, &mut out);
++            push(trf("代理 {0}", &[&display_proxy(&p)]), Some(p), false, &mut out);
+         }
+         if s.auto_detect {
+             for p in self.detected.read().iter() {
+-                push(format!("本机代理 {}", display_proxy(p)), Some(p.clone()), false, &mut out);
++                push(trf("本机代理 {0}", &[&display_proxy(p)]), Some(p.clone()), false, &mut out);
+             }
+         }
+         if s.use_system {
+             if let Some(p) = env_proxy() {
+-                push(format!("环境变量代理 {}", display_proxy(&p)), Some(p), false, &mut out);
++                push(trf("环境变量代理 {0}", &[&display_proxy(&p)]), Some(p), false, &mut out);
+             }
+             if cfg!(any(windows, target_os = "macos")) {
+-                push("系统代理".into(), None, true, &mut out);
++                push(tr("系统代理").into(), None, true, &mut out);
+             }
+         }
+         *self.routes.write() = out;
+@@ -160,7 +161,7 @@ impl RouteManager {
+     pub fn ordered(&self, exclude: Option<&str>) -> Vec<Arc<Route>> {
+         let mode = self.settings.read().mode;
+         let all = self.routes.read().clone();
+-        let (direct, proxies): (Vec<_>, Vec<_>) = all.into_iter().partition(|r| r.name == DIRECT);
++        let (direct, proxies): (Vec<_>, Vec<_>) = all.into_iter().partition(|r| r.name == tr(DIRECT));
+         let mut v = match mode {
+             ProxyMode::DirectThenProxy => direct.into_iter().chain(proxies).collect::<Vec<_>>(),
+             ProxyMode::DirectOnly => direct,
+@@ -232,7 +233,7 @@ impl RouteManager {
+         }
+         let routes = self.ordered(exclude);
+         if routes.is_empty() {
+-            return Err(DlError::new(ErrorKind::Network, "没有可用线路（仅代理模式但未配置或探测到代理）"));
++            return Err(DlError::new(ErrorKind::Network, tr("没有可用线路（仅代理模式但未配置或探测到代理）")));
+         }
+         let hedge = Duration::from_millis(self.settings.read().hedge_delay_ms.max(100));
+         let mut pending = FuturesUnordered::new();
+@@ -286,7 +287,7 @@ impl RouteManager {
+             .iter()
+             .map(|(n, e)| crate::error::RouteFailure { route: n.clone(), status: e.status, message: e.message.clone() })
+             .collect();
+-        let mut e = errors.into_iter().next().map(|(_, e)| e).unwrap_or_else(|| DlError::new(ErrorKind::Network, "没有可用线路"));
++        let mut e = errors.into_iter().next().map(|(_, e)| e).unwrap_or_else(|| DlError::new(ErrorKind::Network, tr("没有可用线路")));
+         e.routes = routes;
+         Err(e)
+     }
+diff --git a/crates/gagadown-core/src/task.rs b/crates/gagadown-core/src/task.rs
+index 0c36a33..4a725a3 100644
+--- a/crates/gagadown-core/src/task.rs
++++ b/crates/gagadown-core/src/task.rs
+@@ -89,6 +89,8 @@ pub struct TaskRecord {
+     pub finished_at: Option<u64>,
+     pub sha256: Option<String>,
+     pub route: Option<String>,
++    #[serde(default)]
++    pub route_latency_ms: Option<u64>,
+     pub elapsed_secs: f64,
+     pub source: String,
+     pub log: Vec<LogLine>,
+@@ -167,6 +169,7 @@ pub struct TaskView {
+     pub splits: u64,
+     pub history: Vec<f32>,
+     pub route: Option<String>,
++    pub route_latency_ms: Option<u64>,
+     pub created_at: u64,
+     pub finished_at: Option<u64>,
+     pub next_retry_at: Option<u64>,
 diff --git a/extension/background.js b/extension/background.js
 index 8e98bf5..0883966 100644
 --- a/extension/background.js
@@ -1130,6 +3266,222 @@ index 8e98bf5..0883966 100644
      showUi();
    })();
    return true;
+diff --git a/extension/manifest.json b/extension/manifest.json
+index be03b9a..6c44d6e 100644
+--- a/extension/manifest.json
++++ b/extension/manifest.json
+@@ -1,7 +1,7 @@
+ {
+   "manifest_version": 3,
+   "name": "GaGaDown",
+-  "version": "0.1.0",
++  "version": "1.0.0",
+   "description": "使用 GaGaDown 接管浏览器下载",
+   "permissions": ["downloads", "downloads.ui", "contextMenus", "storage", "alarms"],
+   "optional_permissions": ["cookies", "webRequest"],
+diff --git a/extension/popup.html b/extension/popup.html
+index d099818..10ff73d 100644
+--- a/extension/popup.html
++++ b/extension/popup.html
+@@ -25,13 +25,16 @@
+   .disclosure { padding: 12px 14px; line-height: 1.5; }
+   .disclosure p { margin: 0 0 9px; }
+   .disclosure label { display: flex; gap: 7px; align-items: flex-start; margin: 10px 0; }
+-  button { border: 0; border-radius: 6px; padding: 8px 11px; color: white; background: var(--on); cursor: pointer; }
++  button { box-sizing: border-box; min-height: 36px; border: 0; border-radius: 6px; padding: 8px 11px; color: white; background: var(--on); font: inherit; cursor: pointer; }
+   button:disabled { opacity: .45; cursor: default; }
++  .pair button, .disclosure button { display: block; width: 100%; }
+   .stop { margin: 8px 14px 4px; background: var(--off); color: var(--fg); }
++  .secondary { background: var(--off); color: var(--fg); }
+   .pair { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+   .pair label { display: block; margin-bottom: 5px; color: var(--weak); font-size: 12px; }
+   .pair input { box-sizing: border-box; width: 100%; padding: 6px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--fg); background: var(--bg); }
+-  .pair button { margin-top: 6px; padding: 5px 8px; }
++  .pair button { margin-top: 6px; }
++  .pair .pair-action { margin: 8px 0 0; }
+ </style>
+ </head>
+ <body>
+@@ -39,12 +42,21 @@
+   <img src="icons/48.png" alt="">
+   <div><div class="title">GaGaDown</div><div class="state" id="stateText">检测中</div></div>
+ </header>
+-<div class="pair">
+-  <label for="apiToken">桌面端配对码（在 GaGaDown 插件页复制）</label>
+-  <input id="apiToken" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 64 位配对码">
+-  <button id="saveToken">保存配对码</button>
+-</div>
+-<section class="disclosure" id="consent">
++<section class="pair" id="pairStep" hidden>
++  <div id="pairIntro">输入桌面端配对码以连接 GaGaDown。</div>
++  <div id="reconnectNotice" hidden>未连接到桌面程序，请确认 GaGaDown 正在运行。</div>
++  <div id="pairEditor">
++    <label for="apiToken">桌面端配对码（在 GaGaDown 插件页复制）</label>
++    <input id="apiToken" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 64 位配对码">
++    <button id="saveToken">保存配对码</button>
++  </div>
++  <button id="editPairing" class="pair-action secondary" hidden>修改配对码</button>
++</section>
++<section class="disclosure" id="permissionStep" hidden>
++  <p>下一步需要允许 GaGaDown 访问网站下载请求，并读取继续下载所需的 Cookie 和请求头。授权后仍需阅读并同意数据处理说明，插件才会开始接管下载。</p>
++  <button id="authorize">授权浏览器权限</button>
++</section>
++<section class="disclosure" id="consent" hidden>
+   <p>启用前请了解：扩展会监测 HTTP/HTTPS 请求，以匹配你发起的下载，并把所选下载的 URL、来源页、Cookie、必要请求头和浏览器标识发送到本机 GaGaDown。登录凭据可能包含在 Cookie 或请求头中。</p>
+   <p>数据仅用于在本机继续下载，不发送给 GaGaDown 服务器。启用时会请求 cookies、webRequest 和所有 HTTP/HTTPS 网站的可选权限；你可以随时关闭或撤销权限。</p>
+   <label><input id="agree" type="checkbox">我已阅读并同意上述数据处理</label>
+@@ -57,10 +69,6 @@
+ </div>
+ <button class="stop" id="disable">关闭并撤销网站访问权限</button>
+ </section>
+-<div class="item">
+-  <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h9"/></svg>
+-  <span>最小接管大小</span><span class="val" id="minSize">-</span>
+-</div>
+ <footer id="ver"></footer>
+ <script src="popup.js"></script>
+ </body>
+diff --git a/extension/popup.js b/extension/popup.js
+index 1fdf802..d8f93ea 100644
+--- a/extension/popup.js
++++ b/extension/popup.js
+@@ -1,30 +1,92 @@
+ const toggle = document.getElementById("toggle");
+ const stateText = document.getElementById("stateText");
+-const minSize = document.getElementById("minSize");
+ const consent = document.getElementById("consent");
+ const controls = document.getElementById("controls");
+ const enable = document.getElementById("enable");
+ const disable = document.getElementById("disable");
+ const apiTokenInput = document.getElementById("apiToken");
+-const size = (n) => (n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(n % (1 << 20) ? 1 : 0)} MB` : `${Math.round(n / 1024)} KB`);
++const pairStep = document.getElementById("pairStep");
++const pairIntro = document.getElementById("pairIntro");
++const reconnectNotice = document.getElementById("reconnectNotice");
++const pairEditor = document.getElementById("pairEditor");
++const editPairing = document.getElementById("editPairing");
++const permissionStep = document.getElementById("permissionStep");
++const authorize = document.getElementById("authorize");
+ const hosts = { permissions: ["cookies", "webRequest"], origins: ["http://*/*", "https://*/*"] };
++let pairingCheckId = 0;
++let renderId = 0;
++let appConnected = false;
++let pairingCheckComplete = false;
++let editingPairing = false;
++
++async function refreshPairingStatus(failureText) {
++  const checkId = ++pairingCheckId;
++  stateText.textContent = "正在检测桌面程序…";
++  try {
++    const j = await chrome.runtime.sendMessage("ping");
++    if (checkId !== pairingCheckId) return;
++    appConnected = j?.app === "gagadown";
++    pairingCheckComplete = true;
++    stateText.textContent = appConnected ? "已连接" : failureText;
++    if (appConnected) await chrome.storage.local.set({ pairingVerified: true });
++    render();
++  } catch {
++    if (checkId === pairingCheckId) {
++      appConnected = false;
++      pairingCheckComplete = true;
++      stateText.textContent = failureText;
++      render();
++    }
++  }
++}
+ 
+ async function render() {
+-  const { enabled, consented, minSize: m } = await chrome.storage.local.get({ enabled: false, consented: false, minSize: null });
++  const currentRenderId = ++renderId;
++  const { enabled, consented, pairingVerified, apiToken } = await chrome.storage.local.get({ enabled: false, consented: false, pairingVerified: false, apiToken: "" });
+   const granted = await chrome.permissions.contains(hosts);
++  if (currentRenderId !== renderId) return;
+   const active = !!enabled && !!consented && granted;
+-  consent.hidden = !!consented;
+-  controls.hidden = !consented;
++  const hasPairingCode = !!apiToken;
++  const hasVerifiedPairing = !!pairingVerified && !!apiToken;
++  const disconnected = hasVerifiedPairing && pairingCheckComplete && !appConnected;
++  const needsPairing = !hasPairingCode || (pairingCheckComplete && !appConnected && !hasVerifiedPairing);
++  pairStep.hidden = !disconnected && !needsPairing;
++  pairIntro.hidden = disconnected;
++  reconnectNotice.hidden = !disconnected;
++  pairEditor.hidden = (disconnected && !editingPairing) || (!needsPairing && !disconnected);
++  editPairing.hidden = !disconnected || editingPairing;
++  permissionStep.hidden = !hasPairingCode || granted || !!consented;
++  consent.hidden = !hasPairingCode || !pairingCheckComplete || !appConnected || !granted || !!consented;
++  controls.hidden = !consented || !appConnected || !granted;
+   toggle.classList.toggle("on", active);
+   enable.disabled = !document.getElementById("agree").checked;
+-  if (typeof m === "number") minSize.textContent = size(m);
+ }
+ 
+ document.getElementById("agree").addEventListener("change", render);
++editPairing.addEventListener("click", () => {
++  editingPairing = true;
++  pairEditor.hidden = false;
++  editPairing.hidden = true;
++  apiTokenInput.focus();
++});
++authorize.addEventListener("click", async () => {
++  const granted = await chrome.permissions.request(hosts);
++  if (!granted) {
++    stateText.textContent = "未获得浏览器权限，接管功能尚未启用";
++    render();
++    return;
++  }
++  const { apiToken } = await chrome.storage.local.get({ apiToken: "" });
++  if (apiToken) {
++    await refreshPairingStatus("配对失败，请检查桌面程序或修改配对码");
++  } else {
++    stateText.textContent = "权限已授权，请输入桌面端配对码";
++    render();
++  }
++});
+ enable.addEventListener("click", async () => {
+   if (!document.getElementById("agree").checked) return;
+-  const granted = await chrome.permissions.request(hosts);
+-  if (!granted) return;
++  if (!await chrome.permissions.contains(hosts) || !appConnected) return;
+   await chrome.storage.local.set({ consented: true, enabled: true });
+   render();
+ });
+@@ -52,11 +114,28 @@ document.getElementById("saveToken").addEventListener("click", async () => {
+     return;
+   }
+   await chrome.storage.local.set({ apiToken });
+-  const j = await chrome.runtime.sendMessage("ping");
+-  stateText.textContent = j ? "已连接" : "配对失败，请检查配对码和桌面程序";
+-});
+-render();
+-chrome.runtime.sendMessage("ping").then((j) => {
+-  stateText.textContent = j ? "已连接" : "未配对或桌面程序未运行";
+-  if (j && typeof j.takeover_min_size === "number") minSize.textContent = size(j.takeover_min_size);
++  await chrome.storage.local.set({ pairingVerified: false });
++  editingPairing = false;
++  appConnected = false;
++  pairingCheckComplete = false;
++  const granted = await chrome.permissions.contains(hosts);
++  if (granted) {
++    await refreshPairingStatus("配对失败，请检查桌面程序或修改配对码");
++  } else {
++    stateText.textContent = "配对码已保存，请先授权浏览器权限";
++    render();
++  }
+ });
++async function initialize() {
++  const { apiToken } = await chrome.storage.local.get({ apiToken: "" });
++  apiTokenInput.value = apiToken;
++  const granted = await chrome.permissions.contains(hosts);
++  if (apiToken && granted) {
++    await refreshPairingStatus("未连接到桌面程序，请检查客户端");
++  } else {
++    pairingCheckComplete = !apiToken;
++    stateText.textContent = apiToken ? "配对码已保存，请先授权浏览器权限" : "尚未配对";
++    render();
++  }
++}
++initialize();
 diff --git a/patches/eframe/src/lib.rs b/patches/eframe/src/lib.rs
 index da1d800..b8769d4 100644
 --- a/patches/eframe/src/lib.rs

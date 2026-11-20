@@ -141,12 +141,12 @@ jobs:
 
       - name: Generate cargo-sources.json
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-aiohttp python3-toml
+          python3 -m venv /tmp/fcg
+          /tmp/fcg/bin/pip install -q aiohttp tomlkit
           curl -fsSL -o /tmp/flatpak-cargo-generator.py \
             https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/41c20aa10819cdb2a4f3ca171758a96d1955c018/cargo/flatpak-cargo-generator.py
           mkdir -p dist
-          python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o dist/cargo-sources.json
+          /tmp/fcg/bin/python /tmp/flatpak-cargo-generator.py Cargo.lock -o dist/cargo-sources.json
 
       - uses: actions/upload-artifact@v4
         with:
