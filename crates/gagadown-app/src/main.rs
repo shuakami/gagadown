@@ -7,6 +7,7 @@ use eframe::egui::{
 use egui_phosphor::regular as ic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use gagadown_core::config::{ProxyMode, Settings};
+use gagadown_core::lang::{self, LangPref};
 use gagadown_core::engine::{CacheKind, CacheReport, Engine, PopupEvent};
 use gagadown_core::task::{now_secs, AddRequest, DeletedRecord, Phase, RemoveMode, Status, TaskView};
 #[cfg(debug_assertions)]
@@ -16,6 +17,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+
+mod strings;
+
+use crate::strings::{tr, trf};
 
 static ICON: &[u8] = include_bytes!("../../../assets/icon_256.rgba");
 static CJK_FONT: &[u8] = include_bytes!("../../../packaging/flatpak/NotoSansCJKsc-Regular.ttf");
@@ -296,7 +301,7 @@ impl MockDownloadPreview {
         let speed = if running { Self::SIZE as f64 / Self::DURATION as f64 } else { 0.0 };
         TaskView {
             id: self.id,
-            filename: format!("模拟下载 · {}.bin", self.label),
+            filename: trf("模拟下载 · {}.bin", &[&self.label]),
             url: "mock://dev-preview/animation.bin".into(),
             host: "dev-preview.local".into(),
             dir: std::path::PathBuf::new(),
@@ -314,6 +319,7 @@ impl MockDownloadPreview {
             splits: 3,
             history: Vec::new(),
             route: Some("DEV MOCK".into()),
+            route_latency_ms: Some(12),
             created_at: self.created_at,
             finished_at: (progress >= 1.0).then_some(self.created_at + elapsed as u64),
             next_retry_at: None,
@@ -418,24 +424,24 @@ fn speed(s: f64) -> String {
 
 fn dur(s: u64) -> String {
     if s < 60 {
-        format!("{s} 秒")
+        trf("{} 秒", &[&s])
     } else if s < 3600 {
-        format!("{} 分 {} 秒", s / 60, s % 60)
+        trf("{} 分 {} 秒", &[&(s / 60), &(s % 60)])
     } else {
-        format!("{} 小时 {} 分", s / 3600, s % 3600 / 60)
+        trf("{} 小时 {} 分", &[&(s / 3600), &(s % 3600 / 60)])
     }
 }
 
 fn ago(ts: u64) -> String {
     let d = now_secs().saturating_sub(ts);
     if d < 60 {
-        "刚刚".into()
+        tr("刚刚").into()
     } else if d < 3600 {
-        format!("{} 分钟前", d / 60)
+        trf("{} 分钟前", &[&(d / 60)])
     } else if d < 86400 {
-        format!("{} 小时前", d / 3600)
+        trf("{} 小时前", &[&(d / 3600)])
     } else {
-        format!("{} 天前", d / 86400)
+        trf("{} 天前", &[&(d / 86400)])
     }
 }
 
@@ -448,30 +454,30 @@ fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError) -> String {
     };
     let scrub = |s: &str| s.replace(&v.url, &masked);
     let mut s = String::new();
-    let _ = writeln!(s, "文件    {}", v.filename);
-    let _ = writeln!(s, "链接    {masked}");
-    let _ = writeln!(s, "时间    {}", when(e.at));
-    let _ = writeln!(s, "类型    {:?}", e.kind);
+    let _ = writeln!(s, "{}", trf("文件    {}", &[&v.filename]));
+    let _ = writeln!(s, "{}", trf("链接    {}", &[&masked]));
+    let _ = writeln!(s, "{}", trf("时间    {}", &[&when(e.at)]));
+    let _ = writeln!(s, "{}", trf("类型    {}", &[&format!("{:?}", e.kind)]));
     if let Some(c) = e.status {
-        let _ = writeln!(s, "状态码  HTTP {c}");
+        let _ = writeln!(s, "{}", trf("状态码  HTTP {}", &[&c]));
     }
-    let _ = writeln!(s, "原始信息  {}", scrub(&e.message));
+    let _ = writeln!(s, "{}", trf("原始信息  {}", &[&scrub(&e.message)]));
     if !e.routes.is_empty() {
-        s.push_str("\n各线路结果\n");
+        s.push_str(tr("\n各线路结果\n"));
         for r in &e.routes {
             match r.status {
                 Some(c) => {
                     let _ = writeln!(s, "  {}  HTTP {c}", r.route);
                 }
                 None => {
-                    let why = gagadown_core::error::brief(&r.message).unwrap_or("无响应");
+                    let why = gagadown_core::error::brief(&r.message).unwrap_or(tr("无响应"));
                     let _ = writeln!(s, "  {}  {why}\n    {}", r.route, scrub(&r.message));
                 }
             }
         }
     }
     if !v.log.is_empty() {
-        s.push_str("\n最近日志\n");
+        s.push_str(tr("\n最近日志\n"));
         for l in v.log.iter().rev().take(12).rev() {
             let _ = writeln!(s, "  {}  {}", when(l.at), scrub(&l.text));
         }
@@ -522,10 +528,10 @@ fn when(ts: u64) -> String {
     let now = Local::now();
     let days = now.date_naive().signed_duration_since(t.date_naive()).num_days();
     match days {
-        0 => t.format("今天 %H:%M").to_string(),
-        1 => t.format("昨天 %H:%M").to_string(),
-        _ if t.year() == now.year() => format!("{}月{}日 {}", t.month(), t.day(), t.format("%H:%M")),
-        _ => format!("{}年{}月{}日", t.year(), t.month(), t.day()),
+        0 => t.format(tr("今天 %H:%M")).to_string(),
+        1 => t.format(tr("昨天 %H:%M")).to_string(),
+        _ if t.year() == now.year() => trf("{}月{}日 {}", &[&t.month(), &t.day(), &t.format("%H:%M")]),
+        _ => trf("{}年{}月{}日", &[&t.year(), &t.month(), &t.day()]),
     }
 }
 
@@ -602,14 +608,19 @@ fn decode_png(b: &[u8]) -> Option<egui::ColorImage> {
 }
 
 fn route_info(v: &TaskView) -> (Option<String>, Option<u64>) {
-    for l in v.log.iter().rev() {
-        if let Some(rest) = l.text.strip_prefix("线路 ") {
-            if let Some((name, ms)) = rest.split_once("，响应 ") {
-                return (v.route.clone().or(Some(name.to_string())), ms.trim_end_matches(" ms").parse().ok());
-            }
-        }
+    (v.route.clone(), v.route_latency_ms)
+}
+
+fn lang_pref_label(pref: LangPref) -> &'static str {
+    match pref {
+        LangPref::Auto => tr("跟随系统"),
+        LangPref::Zh => "简体中文",
+        LangPref::En => "English",
     }
-    (v.route.clone(), None)
+}
+
+fn lang_options() -> [(LangPref, &'static str); 3] {
+    [(LangPref::Auto, tr("跟随系统")), (LangPref::Zh, "简体中文"), (LangPref::En, "English")]
 }
 
 const EXTENSION: &[(&str, &[u8])] = &[
@@ -811,36 +822,36 @@ fn of(v: &TaskView) -> String {
 
 fn meta_line(v: &TaskView, p: &Pal) -> (String, Color32) {
     match v.status {
-        Status::Queued if v.downloaded > 0 => (format!("排队中   {}", of(v)), p.weak),
-        Status::Queued => ("排队中".into(), p.weak),
-        Status::Paused => (format!("已暂停   {}", of(v)), p.weak),
+        Status::Queued if v.downloaded > 0 => (trf("排队中   {}", &[&of(v)]), p.weak),
+        Status::Queued => (tr("排队中").into(), p.weak),
+        Status::Paused => (trf("已暂停   {}", &[&of(v)]), p.weak),
         Status::Running => match v.phase {
             Some(Phase::Downloading) | None => {
                 let mut s = format!("{}   {}", of(v), speed(v.speed));
                 if let Some(e) = v.eta_secs {
-                    s += &format!("   剩余 {}", dur(e));
+                    s += &trf("   剩余 {}", &[&dur(e)]);
                 }
                 (s, p.weak)
             }
-            Some(Phase::Connecting) => ("连接中".into(), p.weak),
-            Some(Phase::Finalizing) => ("写入中".into(), p.weak),
-            Some(Phase::Verifying) => ("校验中".into(), p.weak),
+            Some(Phase::Connecting) => (tr("连接中").into(), p.weak),
+            Some(Phase::Finalizing) => (tr("写入中").into(), p.weak),
+            Some(Phase::Verifying) => (tr("校验中").into(), p.weak),
         },
-        Status::Completed if v.file_missing => ("文件已被移动或删除".into(), p.orange),
+        Status::Completed if v.file_missing => (tr("文件已被移动或删除").into(), p.orange),
         Status::Completed => {
             let mut s = v.size.map(bytes).unwrap_or_default();
             if v.avg_speed > 0.0 {
-                s += &format!("   平均 {}", speed(v.avg_speed));
+                s += &trf("   平均 {}", &[&speed(v.avg_speed)]);
             }
             (s, p.weak)
         }
         Status::Failed => {
             let mut s = match &v.error {
                 Some(e) => e.summary(),
-                None => "失败".into(),
+                None => tr("失败").into(),
             };
             if let Some(t) = v.next_retry_at {
-                s += &format!("，{} 后自动重试", dur(t.saturating_sub(now_secs())));
+                s += &trf("，{} 后自动重试", &[&dur(t.saturating_sub(now_secs()))]);
             }
             (s, p.red)
         }
@@ -1082,7 +1093,7 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
             let tip = if ago == 0 {
                 speed(data[i] as f64)
             } else {
-                format!("{} · {} 秒前", speed(data[i] as f64), ago)
+                trf("{} · {} 秒前", &[&speed(data[i] as f64), &ago])
             };
             let tw = pt.layout_no_wrap(tip.clone(), font(11.5), p.text).size().x + 16.0;
             let mut tr = Rect::from_center_size(pos2(pos.x, r.top() + 12.0), vec2(tw, 22.0));
@@ -1457,8 +1468,8 @@ mod win {
         use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
         use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
         let menu = Menu::new();
-        let show = MenuItem::new("显示主界面", true, None);
-        let exit = MenuItem::new("退出", true, None);
+        let show = MenuItem::new(crate::strings::tr("显示主界面"), true, None);
+        let exit = MenuItem::new(crate::strings::tr("退出"), true, None);
         menu.append_items(&[&show, &PredefinedMenuItem::separator(), &exit]).ok()?;
         let (show_id, exit_id) = (show.id().clone(), exit.id().clone());
         let tray = TrayIconBuilder::new()
@@ -1905,15 +1916,15 @@ impl GaGaTray {
 
 #[cfg(target_os = "linux")]
 impl ksni::Tray for GaGaTray {
-    fn id(&self) -> String { "dev.gagadown.GaGaDown".into() }
+    fn id(&self) -> String { "io.github.shuakami.GaGaDown".into() }
     fn title(&self) -> String { "GaGaDown".into() }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> { vec![self.icon.clone()] }
     fn activate(&mut self, _x: i32, _y: i32) { self.show_window(); }
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::{MenuItem, StandardItem};
-        let mut show = StandardItem { label: "显示主界面".into(), ..Default::default() };
+        let mut show = StandardItem { label: tr("显示主界面").into(), ..Default::default() };
         show.activate = Box::new(|tray: &mut GaGaTray| tray.show_window());
-        let mut exit = StandardItem { label: "退出".into(), ..Default::default() };
+        let mut exit = StandardItem { label: tr("退出").into(), ..Default::default() };
         exit.activate = Box::new(|tray: &mut GaGaTray| {
             tray.quit.store(true, std::sync::atomic::Ordering::SeqCst);
             tray.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
@@ -2100,29 +2111,29 @@ impl App {
             match launch_browser(b, url) {
                 Ok(_) => {
                     self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() });
-                    let target = if std::env::var_os("FLATPAK_ID").is_some() { "系统默认浏览器" } else { b.name };
-                    self.toast(format!("已请求 {target} 打开插件商店页面"), false);
+                    let target = if std::env::var_os("FLATPAK_ID").is_some() { tr("系统默认浏览器") } else { b.name };
+                    self.toast(trf("已请求 {} 打开插件商店页面", &[&target]), false);
                 }
-                Err(e) => self.toast(format!("打开 {} 失败：{e}，请复制下方商店地址手动打开", b.name), true),
+                Err(e) => self.toast(trf("打开 {} 失败：{}，请复制下方商店地址手动打开", &[&b.name, &e]), true),
             }
             return;
         }
         let dir = match unpack_extension(self.engine.data_dir()) {
             Ok(d) => d,
-            Err(e) => return self.toast(format!("解压插件失败：{e}"), true),
+            Err(e) => return self.toast(trf("解压插件失败：{}", &[&e]), true),
         };
         match b {
             Some(b) => {
                 ctx.copy_text(b.page.to_string());
                 match launch_browser(&b, b.page) {
                     Ok(_) => self.ext_guide = Some(ExtGuide { browser: i, since: gagadown_core::task::now_secs() }),
-                    Err(e) => self.toast(format!("打开 {} 失败：{e}", b.name), true),
+                    Err(e) => self.toast(trf("打开 {} 失败：{}", &[&b.name, &e]), true),
                 }
             }
             None => {
                 ctx.copy_text(dir.display().to_string());
                 open_path(&dir);
-                self.toast("插件文件夹路径已复制", false);
+                self.toast(tr("插件文件夹路径已复制"), false);
             }
         }
     }
@@ -2217,7 +2228,7 @@ impl App {
         for url in text.split_whitespace().filter(|u| u.contains("://")) {
             let req = AddRequest { url: url.to_string(), source: Some("manual".into()), ..Default::default() };
             match self.engine.add(req, None) {
-                Ok(o) if o.existed => self.toast(format!("已在列表中：{}", o.filename), false),
+                Ok(o) if o.existed => self.toast(trf("已在列表中：{}", &[&o.filename]), false),
                 Ok(_) => added += 1,
                 Err(e) => self.toast(format!("{e}"), true),
             }
@@ -2236,7 +2247,7 @@ impl App {
                 };
                 self.go(Page::Downloads);
                 self.mock_preview = Some(preview);
-                self.toast("开发预览：模拟下载已开始，不会写入文件", false);
+                self.toast(tr("开发预览：模拟下载已开始，不会写入文件"), false);
                 self.last_refresh = None;
                 return;
             }
@@ -2317,8 +2328,8 @@ impl App {
                         preview.paused_duration = Duration::ZERO;
                     }
                 }
-                Act::Open | Act::Reveal => self.toast("开发预览没有实际下载文件", false),
-                Act::CopyLink => self.toast("开发预览没有真实下载链接", false),
+                Act::Open | Act::Reveal => self.toast(tr("开发预览没有实际下载文件"), false),
+                Act::CopyLink => self.toast(tr("开发预览没有真实下载链接"), false),
                 Act::ErrorInfo => {}
             }
             self.last_refresh = None;
@@ -2335,7 +2346,7 @@ impl App {
             Act::Reveal => reveal(v.path.as_deref().unwrap_or(&v.dir)),
             Act::CopyLink => {
                 ctx.copy_text(v.url.clone());
-                self.toast("链接已复制", false);
+                self.toast(tr("链接已复制"), false);
             }
             Act::Remove => self.removing = Some(id),
             Act::ErrorInfo => self.err_report = Some(id),
@@ -2400,10 +2411,10 @@ impl App {
                     .frame(egui::Frame::NONE)
                     .font(font(12.5))
                     .vertical_align(egui::Align::Center)
-                    .hint_text(RichText::new(URL_INPUT_HINT).color(p.weak)),
+                    .hint_text(RichText::new(tr(URL_INPUT_HINT)).color(p.weak)),
             );
             let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, "下载", p);
+            let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, tr("下载"), p);
             if enter || clicked {
                 self.add_input();
             }
@@ -2413,7 +2424,7 @@ impl App {
     fn activity_bar(&mut self, ui: &mut Ui, p: &Pal) {
         let r = ui.max_rect();
         let active = self.views.iter().filter(|v| matches!(v.status, Status::Running | Status::Queued)).count();
-        let items = [(Page::Downloads, ic::DOWNLOAD_SIMPLE, "下载"), (Page::Trash, ic::TRASH, "回收站"), (Page::Cache, ic::HARD_DRIVES, "缓存"), (Page::Extension, ic::PUZZLE_PIECE, "浏览器插件")];
+        let items = [(Page::Downloads, ic::DOWNLOAD_SIMPLE, tr("下载")), (Page::Trash, ic::TRASH, tr("回收站")), (Page::Cache, ic::HARD_DRIVES, tr("缓存")), (Page::Extension, ic::PUZZLE_PIECE, tr("浏览器插件"))];
         let selected = self.page;
         let mut indicator_y = None;
         for (i, (page, icon, tip)) in items.into_iter().enumerate() {
@@ -2427,7 +2438,7 @@ impl App {
         if selected == Page::Settings {
             indicator_y = Some(sr.center().y);
         }
-        self.activity_item(ui, sr, Page::Settings, ic::GEAR_SIX, "设置", 0, p);
+        self.activity_item(ui, sr, Page::Settings, ic::GEAR_SIX, tr("设置"), 0, p);
         if let Some(target_y) = indicator_y {
             let (center_y, height, moving) = self.nav_indicator.position(selected, target_y, Instant::now());
             if moving {
@@ -2473,10 +2484,10 @@ impl App {
         };
         item(speed(self.engine.total_speed()));
         if busy {
-            item(format!("{} 个下载中", running.len()));
+            item(trf("{} 个下载中", &[&running.len()]));
         }
         if queued > 0 {
-            item(format!("{queued} 个排队"));
+            item(trf("{} 个排队", &[&queued]));
         }
         let (done, total) = running.iter().filter_map(|v| v.size.map(|s| (v.downloaded, s))).fold((0u64, 0u64), |a, b| (a.0 + b.0, a.1 + b.1));
         if total > 0 {
@@ -2506,9 +2517,9 @@ impl App {
         let key = Id::new(("hero", v.id));
         let net = spring(&ctx, key.with("spd"), v.speed as f32, 5.0, 0.0) as f64;
         let stats = [
-            ("网络", speed(net)),
-            ("峰值", speed(peak.max(v.speed))),
-            ("连接", format!("{} / {}", v.connections, v.target)),
+            (tr("网络"), speed(net)),
+            (tr("峰值"), speed(peak.max(v.speed))),
+            (tr("连接"), format!("{} / {}", v.connections, v.target)),
         ];
         for (i, (k, val)) in stats.iter().enumerate() {
             let x = left.left() + i as f32 * 118.0;
@@ -2517,7 +2528,7 @@ impl App {
         }
 
         let y = left.top() + 84.0;
-        pt.text(pos2(left.left(), y), Align2::LEFT_CENTER, if v.status == Status::Paused { "已暂停" } else { "正在下载" }, font(12.0), p.text);
+        pt.text(pos2(left.left(), y), Align2::LEFT_CENTER, if v.status == Status::Paused { tr("已暂停") } else { tr("正在下载") }, font(12.0), p.text);
         let f = seg_bar(&ctx, &pt, Rect::from_min_size(pos2(left.left(), y + 10.0), vec2(left.width(), 5.0)), v, p, key);
         let right = match v.size {
             Some(_) => format!("{}   {:.0}%", of(v), f * 100.0),
@@ -2526,13 +2537,13 @@ impl App {
         pt.text(pos2(left.right(), y), Align2::RIGHT_CENTER, right, font(12.0), p.weak);
 
         let eta = match (v.status, v.eta_secs) {
-            (Status::Running, Some(e)) => format!("剩余时间 {}", dur(e)),
+            (Status::Running, Some(e)) => trf("剩余时间 {}", &[&dur(e)]),
             (Status::Running, None) => meta_line(v, p).0,
             _ => String::new(),
         };
         pt.text(pos2(left.left(), y + 38.0), Align2::LEFT_CENTER, eta, font(12.0), p.weak);
         let br = Rect::from_min_size(pos2(left.right() - 26.0, y + 25.0), vec2(26.0, 26.0));
-        let (icon, tip, a) = if v.status == Status::Paused { (ic::PLAY, "继续", Act::Resume) } else { (ic::PAUSE, "暂停", Act::Pause) };
+        let (icon, tip, a) = if v.status == Status::Paused { (ic::PLAY, tr("继续"), Act::Resume) } else { (ic::PAUSE, tr("暂停"), Act::Pause) };
         if icon_at(ui, br, Id::new("hero_btn"), icon, tip, p) {
             self.act(&ctx, v, a);
         }
@@ -2609,14 +2620,14 @@ impl App {
         ui.painter().text(
             pos2(center.x, center.y - 48.0),
             Align2::CENTER_CENTER,
-            "欢迎使用 GaGaDown",
+            tr("欢迎使用 GaGaDown"),
             bold(24.0),
             p.text,
         );
         ui.painter().text(
             pos2(center.x, center.y - 14.0),
             Align2::CENTER_CENTER,
-            "粘贴下载链接，开始你的第一次下载",
+            tr("粘贴下载链接，开始你的第一次下载"),
             font(14.0),
             p.weak,
         );
@@ -2648,32 +2659,59 @@ impl App {
                 .frame(egui::Frame::NONE)
                 .font(font(14.0))
                 .vertical_align(egui::Align::Center)
-                .hint_text(RichText::new(URL_INPUT_HINT).color(p.weak)),
+                .hint_text(RichText::new(tr(URL_INPUT_HINT)).color(p.weak)),
         );
         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let clicked = icon_at(ui, button, Id::new("welcome_go"), ic::ARROW_DOWN, "开始下载", p);
+        let clicked = icon_at(ui, button, Id::new("welcome_go"), ic::ARROW_DOWN, tr("开始下载"), p);
         if enter || clicked {
             self.add_input();
         }
         ui.painter().text(
             pos2(center.x, field.bottom() + 22.0),
             Align2::CENTER_CENTER,
-            "支持直接粘贴链接并按 Enter 开始",
+            tr("支持直接粘贴链接并按 Enter 开始"),
             font(11.5),
             p.weak,
         );
+
+        let lr = Rect::from_min_size(pos2(bounds.right() - 156.0, bounds.top() + 16.0), vec2(140.0, 30.0));
+        let cur = self.draft.language;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(lr), |ui| {
+            egui::ComboBox::from_id_salt("welcome_lang").width(lr.width()).selected_text(lang_pref_label(cur)).show_ui(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                for (pref, label) in lang_options() {
+                    if menu_choice(ui, label, cur == pref, p) {
+                        self.set_language(pref);
+                        ui.close();
+                    }
+                }
+            });
+        });
+    }
+
+    /// 欢迎页语言切换：直接写设置并即时生效（不走设置页 600ms 防抖）。
+    fn set_language(&mut self, pref: LangPref) {
+        let mut cand = self.draft.clone();
+        cand.language = pref;
+        cand.proxy.proxies = self.draft_proxies.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        if let Err(e) = self.engine.set_settings(cand) {
+            self.toast(format!("{e}"), true);
+            return;
+        }
+        self.draft.language = pref;
+        lang::set_pref(pref);
     }
 
     fn section(&mut self, ui: &mut Ui, sec: Sec, items: &[TaskView], p: &Pal) {
         let ctx = ui.ctx().clone();
         let key = Id::new(("section", sec as u8));
         let open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, true));
-        let (title, actions): (&str, &[(&str, &str)]) = match sec {
-            Sec::Active => ("下载中", &[(ic::PLAY, "全部开始"), (ic::PAUSE, "全部暂停")]),
-            Sec::Failed => ("失败", &[(ic::ARROW_CLOCKWISE, "全部重试")]),
-            Sec::Done => ("已完成", &[(ic::BROOM, "清除全部")]),
+        let (title, actions): (&str, Vec<(&str, &str)>) = match sec {
+            Sec::Active => (tr("下载中"), vec![(ic::PLAY, tr("全部开始")), (ic::PAUSE, tr("全部暂停"))]),
+            Sec::Failed => (tr("失败"), vec![(ic::ARROW_CLOCKWISE, tr("全部重试"))]),
+            Sec::Done => (tr("已完成"), vec![(ic::BROOM, tr("清除全部"))]),
         };
-        let actions = if items.is_empty() { &[][..] } else { actions };
+        let actions: &[(&str, &str)] = if items.is_empty() { &[] } else { &actions };
         let (toggle, hit, btns) = header(ui, title, Some(items.len()), Some(open), actions, p);
         if toggle {
             ctx.data_mut(|d| d.insert_persisted(key, !open));
@@ -2692,9 +2730,9 @@ impl App {
                 ui.set_width(190.0);
                 ui.spacing_mut().item_spacing.y = 1.0;
                 for (mode, label, danger) in [
-                    (RemoveMode::KeepFiles, "清除全部，保留文件", false),
-                    (RemoveMode::TrashFiles, "清除全部，文件移到回收站", false),
-                    (RemoveMode::DeleteFiles, "清除全部并彻底删除文件", true),
+                    (RemoveMode::KeepFiles, tr("清除全部，保留文件"), false),
+                    (RemoveMode::TrashFiles, tr("清除全部，文件移到回收站"), false),
+                    (RemoveMode::DeleteFiles, tr("清除全部并彻底删除文件"), true),
                 ] {
                     if menu_item(ui, label, danger, p) {
                         pick = Some(mode);
@@ -2732,8 +2770,8 @@ impl App {
         if items.is_empty() {
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
             let t = match sec {
-                Sec::Active => "队列中无下载",
-                _ => "暂无",
+                Sec::Active => tr("队列中无下载"),
+                _ => tr("暂无"),
             };
             ui.painter().text(pos2(r.left() + 52.0, r.center().y), Align2::LEFT_CENTER, t, font(12.5), p.weak);
             return;
@@ -2749,7 +2787,7 @@ impl App {
         let ctx = ui.ctx().clone();
         let key = Id::new("section_handoff");
         let open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, true));
-        let (toggle, hit, _) = header(ui, "未接管", Some(self.handoff_fails.len()), Some(open), &[(ic::BROOM, "清除记录")], p);
+        let (toggle, hit, _) = header(ui, tr("未接管"), Some(self.handoff_fails.len()), Some(open), &[(ic::BROOM, tr("清除记录"))], p);
         if toggle {
             ctx.data_mut(|d| d.insert_persisted(key, !open));
         }
@@ -2771,10 +2809,10 @@ impl App {
             self.paint_file(&ctx, &pt, pos2(r.left() + 30.0, r.center().y), 26.0, &h.name, None, p, 0.7);
             let w = (r.width() - 52.0 - 56.0).max(80.0);
             text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &h.name, font(13.5), p.text, w);
-            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, format!("{}   已交给浏览器下载   {}", h.reason, ago(h.at)), font(12.0), p.red, w);
+            text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, trf("{}   已交给浏览器下载   {}", &[&h.reason, &ago(h.at)]), font(12.0), p.red, w);
             if hovered {
                 let b = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
-                if icon_at(ui, b, resp.id.with(("handoff_x", i)), ic::X, "移除记录", p) {
+                if icon_at(ui, b, resp.id.with(("handoff_x", i)), ic::X, tr("移除记录"), p) {
                     drop = Some(i);
                 }
             }
@@ -2787,16 +2825,16 @@ impl App {
 
     fn row_actions(v: &TaskView) -> Vec<(&'static str, &'static str, Act)> {
         let mut a = match v.status {
-            Status::Running | Status::Queued => vec![(ic::PAUSE, "暂停", Act::Pause)],
-            Status::Paused => vec![(ic::PLAY, "继续", Act::Resume), (ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
-            Status::Failed => vec![(ic::PLAY, "重试", Act::Resume), (ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
-            Status::Completed if v.file_missing => vec![(ic::ARROW_CLOCKWISE, "重新下载", Act::Redownload)],
-            Status::Completed => vec![(ic::FOLDER_OPEN, "打开所在文件夹", Act::Reveal)],
+            Status::Running | Status::Queued => vec![(ic::PAUSE, tr("暂停"), Act::Pause)],
+            Status::Paused => vec![(ic::PLAY, tr("继续"), Act::Resume), (ic::ARROW_CLOCKWISE, tr("重新下载"), Act::Redownload)],
+            Status::Failed => vec![(ic::PLAY, tr("重试"), Act::Resume), (ic::ARROW_CLOCKWISE, tr("重新下载"), Act::Redownload)],
+            Status::Completed if v.file_missing => vec![(ic::ARROW_CLOCKWISE, tr("重新下载"), Act::Redownload)],
+            Status::Completed => vec![(ic::FOLDER_OPEN, tr("打开所在文件夹"), Act::Reveal)],
         };
         if v.status == Status::Failed && v.error.is_some() {
-            a.insert(0, (ic::INFO, "错误详情", Act::ErrorInfo));
+            a.insert(0, (ic::INFO, tr("错误详情"), Act::ErrorInfo));
         }
-        a.push((ic::TRASH, "删除", Act::Remove));
+        a.push((ic::TRASH, tr("删除"), Act::Remove));
         a
     }
 
@@ -2848,10 +2886,10 @@ impl App {
                     let t = since_on(&ctx, key.with("done"), !v.file_missing).unwrap_or(f32::INFINITY);
                     if t < 1.3 {
                         seg_bar(&ctx, &pt, Rect::from_min_size(pos2(rx - 160.0, r.top() + 29.0), vec2(160.0, 4.0)), v, p, key);
-                        pt.text(pos2(rx, r.top() + 15.0), Align2::RIGHT_CENTER, "完成", font(12.0), p.green.gamma_multiply(ease_out_cubic(t / 0.4)));
+                        pt.text(pos2(rx, r.top() + 15.0), Align2::RIGHT_CENTER, tr("完成"), font(12.0), p.green.gamma_multiply(ease_out_cubic(t / 0.4)));
                     } else if let Some(f) = v.finished_at {
                         let a = ease_out_cubic((t - 1.3) / 0.35);
-                        pt.text(pos2(rx, r.center().y), Align2::RIGHT_CENTER, format!("完成于 {}", when(f)), font(12.0), p.weak.gamma_multiply(a));
+                        pt.text(pos2(rx, r.center().y), Align2::RIGHT_CENTER, trf("完成于 {}", &[&when(f)]), font(12.0), p.weak.gamma_multiply(a));
                     }
                 }
                 _ => {}
@@ -2870,13 +2908,13 @@ impl App {
             ui.set_width(140.0);
             let mut items: Vec<(&str, &str, Act)> = Vec::new();
             if v.status == Status::Completed && !v.file_missing && !mock_item {
-                items.push((ic::FILE, "打开", Act::Open));
-                items.push((ic::FOLDER_OPEN, "打开所在文件夹", Act::Reveal));
+                items.push((ic::FILE, tr("打开"), Act::Open));
+                items.push((ic::FOLDER_OPEN, tr("打开所在文件夹"), Act::Reveal));
             } else {
                 items.extend(row_actions.iter().copied().filter(|a| !matches!(a.2, Act::Remove)));
             }
-            items.push((ic::LINK, "复制链接", Act::CopyLink));
-            items.push((ic::TRASH, "删除", Act::Remove));
+            items.push((ic::LINK, tr("复制链接"), Act::CopyLink));
+            items.push((ic::TRASH, tr("删除"), Act::Remove));
             ui.spacing_mut().item_spacing.y = 1.0;
             for (_, label, a) in items {
                 if menu_item(ui, label, matches!(a, Act::Remove), p) {
@@ -2893,8 +2931,8 @@ impl App {
     fn detail(&mut self, ui: &mut Ui, v: &TaskView, p: &Pal) {
         let ctx = ui.ctx().clone();
         let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::hover());
-        ui.painter().text(pos2(hr.left() + 16.0, hr.center().y), Align2::LEFT_CENTER, "详情", bold(12.0), p.text);
-        if icon_at(ui, Rect::from_min_size(pos2(hr.right() - 34.0, hr.center().y - 12.0), vec2(24.0, 24.0)), Id::new("detail_close"), ic::X, "关闭", p) {
+        ui.painter().text(pos2(hr.left() + 16.0, hr.center().y), Align2::LEFT_CENTER, tr("详情"), bold(12.0), p.text);
+        if icon_at(ui, Rect::from_min_size(pos2(hr.right() - 34.0, hr.center().y - 12.0), vec2(24.0, 24.0)), Id::new("detail_close"), ic::X, tr("关闭"), p) {
             self.selected = None;
         }
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
@@ -2904,7 +2942,7 @@ impl App {
                 ui.add(egui::Label::new(RichText::new(m).size(12.0).color(c)).wrap());
                 if v.status == Status::Failed && v.error.is_some() {
                     ui.add_space(4.0);
-                    let l = ui.add(egui::Label::new(RichText::new("查看错误报告").size(12.0).color(p.accent)).sense(Sense::click()));
+                    let l = ui.add(egui::Label::new(RichText::new(tr("查看错误报告")).size(12.0).color(p.accent)).sense(Sense::click()));
                     if l.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         self.err_report = Some(v.id);
                     }
@@ -2924,53 +2962,53 @@ impl App {
                             ui.add(egui::Label::new(RichText::new(s).size(12.0).color(p.text)).truncate());
                         });
                     };
-                    k(ui, "大小");
-                    val(ui, v.size.map(bytes).unwrap_or_else(|| "未知".into()));
+                    k(ui, tr("大小"));
+                    val(ui, v.size.map(bytes).unwrap_or_else(|| tr("未知").into()));
                     ui.end_row();
                     if v.status != Status::Completed {
-                        k(ui, "已下载");
+                        k(ui, tr("已下载"));
                         val(ui, format!("{}   {:.1}%", bytes(v.downloaded), frac(v) * 100.0));
                         ui.end_row();
                     }
                     if v.status == Status::Running {
-                        k(ui, "速度");
+                        k(ui, tr("速度"));
                         val(ui, speed(v.speed));
                         ui.end_row();
-                        k(ui, "连接");
+                        k(ui, tr("连接"));
                         val(ui, format!("{} / {}", v.connections, v.target));
                         ui.end_row();
                     }
                     if v.avg_speed > 0.0 {
-                        k(ui, "平均速度");
+                        k(ui, tr("平均速度"));
                         val(ui, speed(v.avg_speed));
                         ui.end_row();
                     }
-                    k(ui, "分段");
-                    val(ui, if v.ranges { format!("支持，切分 {} 次", v.splits) } else { "不支持".into() });
+                    k(ui, tr("分段"));
+                    val(ui, if v.ranges { trf("支持，切分 {} 次", &[&v.splits]) } else { tr("不支持").into() });
                     ui.end_row();
                     if let Some(r) = &v.route {
-                        k(ui, "线路");
+                        k(ui, tr("线路"));
                         val(ui, r.clone());
                         ui.end_row();
                     }
-                    k(ui, "添加于");
+                    k(ui, tr("添加于"));
                     val(ui, when(v.created_at));
                     ui.end_row();
-                    k(ui, "保存到");
+                    k(ui, tr("保存到"));
                     ui.allocate_ui_with_layout(vec2(vw, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.spacing_mut().button_padding = vec2(2.0, 0.0);
-                        if ui.add(egui::Button::new(RichText::new(ic::FOLDER_OPEN).font(ifont(13.0))).frame_when_inactive(false).small()).tip("打开所在文件夹").clicked() {
+                        if ui.add(egui::Button::new(RichText::new(ic::FOLDER_OPEN).font(ifont(13.0))).frame_when_inactive(false).small()).tip(tr("打开所在文件夹")).clicked() {
                             act = Some(Act::Reveal);
                         }
                         ui.add(egui::Label::new(RichText::new(v.path.as_ref().unwrap_or(&v.dir).display().to_string()).size(12.0).color(p.text)).truncate());
                     });
                     ui.end_row();
-                    k(ui, "链接");
+                    k(ui, tr("链接"));
                     ui.allocate_ui_with_layout(vec2(vw, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.spacing_mut().button_padding = vec2(2.0, 0.0);
-                        if ui.add(egui::Button::new(RichText::new(ic::COPY).font(ifont(13.0))).frame_when_inactive(false).small()).tip("复制链接").clicked() {
+                        if ui.add(egui::Button::new(RichText::new(ic::COPY).font(ifont(13.0))).frame_when_inactive(false).small()).tip(tr("复制链接")).clicked() {
                             act = Some(Act::CopyLink);
                         }
                         ui.add(egui::Label::new(RichText::new(&v.url).size(12.0).color(p.text)).truncate()).tip(&v.url);
@@ -2982,7 +3020,7 @@ impl App {
                 }
                 if !v.host.is_empty() {
                     ui.add_space(16.0);
-                    ui.label(RichText::new("下载服务器").font(bold(12.0)).color(p.text));
+                    ui.label(RichText::new(tr("下载服务器")).font(bold(12.0)).color(p.text));
                     ui.add_space(6.0);
                     self.server_row(ui, v, p);
                 }
@@ -2997,18 +3035,19 @@ impl App {
 
     fn trash(&mut self, ui: &mut Ui, p: &Pal) {
         let ctx = ui.ctx().clone();
-        let actions: &[(&str, &str)] = if self.deleted.is_empty() { &[] } else { &[(ic::BROOM, "清空回收站")] };
+        let clear_actions = [(ic::BROOM, tr("清空回收站"))];
+        let actions: &[(&str, &str)] = if self.deleted.is_empty() { &[] } else { &clear_actions };
         ui.add_space(6.0);
-        let (_, _, btns) = header(ui, "回收站", Some(self.deleted.len()), None, actions, p);
+        let (_, _, btns) = header(ui, tr("回收站"), Some(self.deleted.len()), None, actions, p);
         if let Some(b) = btns.first() {
             let mut pick = None;
             egui::Popup::menu(b).show(|ui| {
                 ui.set_width(190.0);
                 ui.spacing_mut().item_spacing.y = 1.0;
                 for (mode, label, danger) in [
-                    (RemoveMode::KeepFiles, "只清空记录，保留文件", false),
-                    (RemoveMode::TrashFiles, "文件移到系统回收站", false),
-                    (RemoveMode::DeleteFiles, "彻底删除文件", true),
+                    (RemoveMode::KeepFiles, tr("只清空记录，保留文件"), false),
+                    (RemoveMode::TrashFiles, tr("文件移到系统回收站"), false),
+                    (RemoveMode::DeleteFiles, tr("彻底删除文件"), true),
                 ] {
                     if menu_item(ui, label, danger, p) {
                         pick = Some(mode);
@@ -3022,7 +3061,7 @@ impl App {
             }
         }
         if self.deleted.is_empty() {
-            ui.centered_and_justified(|ui| ui.label(RichText::new("回收站是空的").color(p.weak)));
+            ui.centered_and_justified(|ui| ui.label(RichText::new(tr("回收站是空的")).color(p.weak)));
             return;
         }
         let list = self.deleted.clone();
@@ -3039,21 +3078,21 @@ impl App {
                 text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &d.rec.filename, font(13.5), p.text, w);
                 let size = d.rec.size.map(bytes).unwrap_or_default();
                 let mode = match d.mode {
-                    RemoveMode::KeepFiles => "保留文件",
-                    RemoveMode::TrashFiles => "文件在系统回收站",
-                    RemoveMode::DeleteFiles => "文件已删除",
+                    RemoveMode::KeepFiles => tr("保留文件"),
+                    RemoveMode::TrashFiles => tr("文件在系统回收站"),
+                    RemoveMode::DeleteFiles => tr("文件已删除"),
                 };
-                text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, format!("{size}   {mode}   {}删除", ago(d.deleted_at)), font(12.0), p.weak, w);
+                text_line(&pt, pos2(r.left() + 52.0, r.top() + 32.0), Align2::LEFT_CENTER, trf("{}   {}   {}删除", &[&size, &mode, &ago(d.deleted_at)]), font(12.0), p.weak, w);
                 if hovered {
                     let b2 = Rect::from_min_size(pos2(r.right() - 40.0, r.center().y - 13.0), vec2(26.0, 26.0));
                     let b1 = b2.translate(vec2(-28.0, 0.0));
-                    if icon_at(ui, b1, resp.id.with("restore"), ic::ARROW_COUNTER_CLOCKWISE, "恢复", p) {
+                    if icon_at(ui, b1, resp.id.with("restore"), ic::ARROW_COUNTER_CLOCKWISE, tr("恢复"), p) {
                         if !self.engine.restore(d.rec.id) {
-                            self.toast("无法恢复", true);
+                            self.toast(tr("无法恢复"), true);
                         }
                         self.last_refresh = None;
                     }
-                    if icon_at(ui, b2, resp.id.with("purge"), ic::X, "彻底删除", p) {
+                    if icon_at(ui, b2, resp.id.with("purge"), ic::X, tr("彻底删除"), p) {
                         self.engine.purge_deleted(Some(d.rec.id));
                         self.last_refresh = None;
                     }
@@ -3064,7 +3103,7 @@ impl App {
     }
 
     fn extension_page(&mut self, ui: &mut Ui, p: &Pal) {
-        Self::page_title(ui, "浏览器插件", None, &[], p);
+        Self::page_title(ui, tr("浏览器插件"), None, &[], p);
         let ctx = ui.ctx().clone();
         ctx.request_repaint_after(Duration::from_millis(500));
         let (mut act, mut copy, mut open, mut tab, mut copy_page, mut copy_token) = (None, false, false, None, None, false);
@@ -3090,15 +3129,15 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let w = ui.available_width().min(680.0);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装插件之后，下载就放心交给 GaGaDown 吧！", font(12.5), p.weak, w);
+                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, tr("安装插件之后，下载就放心交给 GaGaDown 吧！"), font(12.5), p.weak, w);
                 ui.add_space(10.0);
                 let Some(b) = browsers.get(sel) else {
                     let (r, _) = ui.allocate_exact_size(vec2(w, 64.0), Sense::hover());
                     let pt = ui.painter().clone();
                     pt.rect(r, CornerRadius::same(8), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
-                    text_line(&pt, pos2(r.left() + 16.0, r.center().y), Align2::LEFT_CENTER, "没有找到 Chrome 或 Edge", font(13.5), p.text, w - 160.0);
+                    text_line(&pt, pos2(r.left() + 16.0, r.center().y), Align2::LEFT_CENTER, tr("没有找到 Chrome 或 Edge"), font(13.5), p.text, w - 160.0);
                     let br = Rect::from_min_size(pos2(r.right() - 130.0, r.center().y - 15.0), vec2(114.0, 30.0));
-                    if btn_at(ui, br, Id::new("ext-folder"), "打开插件文件夹", false, p) {
+                    if btn_at(ui, br, Id::new("ext-folder"), tr("打开插件文件夹"), false, p) {
                         act = Some(usize::MAX);
                     }
                     return;
@@ -3138,51 +3177,51 @@ impl App {
                 icon_at(&pt, sel, pos2(r.left() + 36.0, r.center().y), 40.0, 1.0);
                 let tx = r.left() + 68.0;
                 text_line(&pt, pos2(tx, r.center().y - 10.0), Align2::LEFT_CENTER, b.name, bold(15.0), p.text, w - 200.0);
-                let (st, sc) = if on { ("已连接", p.green) } else { ("未连接", p.weak) };
+                let (st, sc) = if on { (tr("已连接"), p.green) } else { (tr("未连接"), p.weak) };
                 text_line(&pt, pos2(tx, r.center().y + 11.0), Align2::LEFT_CENTER, st, font(12.0), sc, 200.0);
                 let br = Rect::from_min_size(pos2(r.right() - 112.0, r.center().y - 15.0), vec2(96.0, 30.0));
-                let install_label = if b.store_url.is_some() { "打开商店" } else if on { "重新安装" } else { "安装插件" };
+                let install_label = if b.store_url.is_some() { tr("打开商店") } else if on { tr("重新安装") } else { tr("安装插件") };
                 if btn_at(ui, br, Id::new(("ext-install", sel)), install_label, !on, p) {
                     act = Some(sel);
                 }
 
                 ui.add_space(10.0);
                 let (row, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
-                text_line(ui.painter(), pos2(row.left(), row.center().y), Align2::LEFT_CENTER, "本机 API 配对码", font(12.5), p.weak, 120.0);
+                text_line(ui.painter(), pos2(row.left(), row.center().y), Align2::LEFT_CENTER, tr("本机 API 配对码"), font(12.5), p.weak, 120.0);
                 let copy_rect = Rect::from_min_size(pos2(row.right() - 58.0, row.center().y - 14.0), vec2(58.0, 28.0));
-                copy_token = btn_at(ui, copy_rect, Id::new("ext-copy-token"), "复制", false, p);
+                copy_token = btn_at(ui, copy_rect, Id::new("ext-copy-token"), tr("复制"), false, p);
                 let token_rect = Rect::from_min_max(pos2(row.left() + 124.0, row.top()), pos2(copy_rect.left() - 8.0, row.bottom()));
                 ui.painter().rect(token_rect, CornerRadius::same(6), card, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
                 text_line(ui.painter(), pos2(token_rect.left() + 8.0, token_rect.center().y), Align2::LEFT_CENTER, self.engine.extension_api_token(), FontId::monospace(10.0), p.text, token_rect.width() - 16.0);
 
                 ui.add_space(24.0);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "安装步骤", bold(13.5), p.text, w);
+                text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, tr("安装步骤"), bold(13.5), p.text, w);
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
                 let hint = if std::env::var_os("FLATPAK_ID").is_some() {
-                    "Flatpak 会调用系统默认浏览器；请确认打开的是 Chrome 或 Edge"
+                    tr("Flatpak 会调用系统默认浏览器；请确认打开的是 Chrome 或 Edge")
                 } else if b.store_url.is_some() {
-                    "点“打开商店”前往 Chrome 网上应用店，安装后完成配对并启用"
+                    tr("点“打开商店”前往 Chrome 网上应用店，安装后完成配对并启用")
                 } else {
-                    "点“安装插件”会打开浏览器，并复制好扩展页地址"
+                    tr("点“安装插件”会打开浏览器，并复制好扩展页地址")
                 };
                 text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, hint, font(12.0), p.weak, w);
                 ui.add_space(8.0);
                 let steps = if b.store_url.is_some() {
                     vec![
-                        "在商店页面点击“添加至 Chrome”，并确认添加扩展程序".to_string(),
-                        "在浏览器工具栏的扩展菜单中打开 GaGaDown".to_string(),
-                        "将上方配对码粘贴到扩展弹窗，点击“保存配对码”".to_string(),
-                        "阅读数据处理说明，勾选同意并点击“同意并启用”，确认权限".to_string(),
+                        tr("在商店页面点击“添加至 Chrome”，并确认添加扩展程序").to_string(),
+                        tr("在浏览器工具栏的扩展菜单中打开 GaGaDown").to_string(),
+                        tr("将上方配对码粘贴到扩展弹窗，点击“保存配对码”").to_string(),
+                        tr("阅读数据处理说明，勾选同意并点击“同意并启用”，确认权限").to_string(),
                     ]
                 } else {
-                    let (dev, load) = if b.key == "edge" { ("开发人员模式", "加载解压缩的扩展") } else { ("开发者模式", "加载未打包的扩展程序") };
+                    let (dev, load) = if b.key == "edge" { (tr("开发人员模式"), tr("加载解压缩的扩展")) } else { (tr("开发者模式"), tr("加载未打包的扩展程序")) };
                     vec![
-                        format!("在浏览器地址栏粘贴 {} 并回车", b.page),
-                        format!("在扩展页打开“{dev}”开关"),
-                        format!("点击“{load}”"),
-                        "复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”".to_string(),
-                        "在扩展弹出窗口粘贴上方配对码，并完成数据处理同意".to_string(),
+                        trf("在浏览器地址栏粘贴 {} 并回车", &[&b.page]),
+                        trf("在扩展页打开“{}”开关", &[&dev]),
+                        trf("点击“{}”", &[&load]),
+                        tr("复制下面的插件路径，粘贴到弹出窗口的地址栏，回车后点“选择文件夹”").to_string(),
+                        tr("在扩展弹出窗口粘贴上方配对码，并完成数据处理同意").to_string(),
                     ]
                 };
                 let ind = 30.0;
@@ -3196,7 +3235,7 @@ impl App {
                     text_line(pt, pos2(r.left() + ind, r.center().y), Align2::LEFT_CENTER, s, font(13.0), p.text, tw);
                     if n == 0 {
                         let cb = Rect::from_min_size(pos2(r.right() - 76.0, r.center().y - 14.0), vec2(76.0, 28.0));
-                        if btn_at(ui, cb, Id::new("ext-copy-page"), "复制地址", false, p) {
+                        if btn_at(ui, cb, Id::new("ext-copy-page"), tr("复制地址"), false, p) {
                             copy_page = Some(b.store_url.unwrap_or(b.page));
                         }
                     }
@@ -3204,7 +3243,7 @@ impl App {
                 if b.store_url.is_some() {
                     ui.add_space(8.0);
                     let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-                    text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, "已安装开发者版本？请先停用或移除旧插件，再安装商店版本并重新配对。", font(12.0), p.weak, w);
+                    text_line(ui.painter(), r.left_center(), Align2::LEFT_CENTER, tr("已安装开发者版本？请先停用或移除旧插件，再安装商店版本并重新配对。"), font(12.0), p.weak, w);
                 } else {
                     ui.add_space(4.0);
                     let (row, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
@@ -3213,8 +3252,8 @@ impl App {
                     let ob = Rect::from_min_size(pos2(r.right() - 98.0, r.top() + 4.0), vec2(94.0, 28.0));
                     let cb = Rect::from_min_size(pos2(ob.left() - 62.0, r.top() + 4.0), vec2(58.0, 28.0));
                     text_line(ui.painter(), pos2(r.left() + 12.0, r.center().y), Align2::LEFT_CENTER, &path_s, FontId::monospace(11.5), p.text, cb.left() - r.left() - 24.0);
-                    copy = btn_at(ui, cb, Id::new("ext-copy"), "复制", false, p);
-                    open = btn_at(ui, ob, Id::new("ext-open"), "打开文件夹", false, p);
+                    copy = btn_at(ui, cb, Id::new("ext-copy"), tr("复制"), false, p);
+                    open = btn_at(ui, ob, Id::new("ext-open"), tr("打开文件夹"), false, p);
                 }
                 if since.is_none() {
                     return;
@@ -3222,9 +3261,9 @@ impl App {
                 ui.add_space(16.0);
                 let (row, _) = ui.allocate_exact_size(vec2(w, 22.0), Sense::hover());
                 let (label, size, color) = if linked {
-                    ("安装成功，插件已连接", 13.0, p.green)
+                    (tr("安装成功，插件已连接"), 13.0, p.green)
                 } else {
-                    ("等待插件连接…", 12.5, p.weak)
+                    (tr("等待插件连接…"), 12.5, p.weak)
                 };
                 let icon = row.left_center() + vec2(7.0, 0.0);
                 text_line(ui.painter(), row.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, label, font(size), color, w - 22.0);
@@ -3243,15 +3282,15 @@ impl App {
         }
         if copy {
             ctx.copy_text(path_s);
-            self.toast("路径已复制", false);
+            self.toast(tr("路径已复制"), false);
         }
         if let Some(u) = copy_page {
             ctx.copy_text(u.to_string());
-            self.toast("地址已复制", false);
+            self.toast(tr("地址已复制"), false);
         }
         if copy_token {
             ctx.copy_text(self.engine.extension_api_token().to_string());
-            self.toast("配对码已复制", false);
+            self.toast(tr("配对码已复制"), false);
         }
         if open {
             let _ = unpack_extension(self.engine.data_dir());
@@ -3260,7 +3299,7 @@ impl App {
     }
 
     fn cache_page(&mut self, ui: &mut Ui, p: &Pal) {
-        if Self::page_title(ui, "缓存", None, &[(ic::ARROW_CLOCKWISE, "刷新")], p) == Some(0) {
+        if Self::page_title(ui, tr("缓存"), None, &[(ic::ARROW_CLOCKWISE, tr("刷新"))], p) == Some(0) {
             self.cache = Some(self.engine.cache_report());
         }
         let Some(rep) = self.cache.clone() else { return };
@@ -3274,26 +3313,26 @@ impl App {
                     });
                     ui.add_space(16.0);
                 };
-                stat(ui, "下载中", bytes(rep.active_bytes));
-                stat(ui, "回收站", bytes(rep.deleted_bytes));
-                stat(ui, "孤儿文件", bytes(rep.orphan_bytes));
+                stat(ui, tr("下载中"), bytes(rep.active_bytes));
+                stat(ui, tr("回收站"), bytes(rep.deleted_bytes));
+                stat(ui, tr("孤儿文件"), bytes(rep.orphan_bytes));
                 if let Some(f) = rep.free_space {
-                    stat(ui, "磁盘剩余", bytes(f));
+                    stat(ui, tr("磁盘剩余"), bytes(f));
                 }
             });
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if rep.orphan_bytes > 0 && btn(ui, "清理孤儿文件", true, p) {
+                if rep.orphan_bytes > 0 && btn(ui, tr("清理孤儿文件"), true, p) {
                     let n = self.engine.clean_cache(true, false);
-                    self.toast(format!("已释放 {}", bytes(n)), false);
+                    self.toast(trf("已释放 {}", &[&bytes(n)]), false);
                     self.cache = Some(self.engine.cache_report());
                 }
-                if rep.deleted_bytes > 0 && btn(ui, "清理回收站缓存", false, p) {
+                if rep.deleted_bytes > 0 && btn(ui, tr("清理回收站缓存"), false, p) {
                     let n = self.engine.clean_cache(false, true);
-                    self.toast(format!("已释放 {}", bytes(n)), false);
+                    self.toast(trf("已释放 {}", &[&bytes(n)]), false);
                     self.cache = Some(self.engine.cache_report());
                 }
-                if rep.missing_files > 0 && btn(ui, &format!("移除文件丢失的任务 ({})", rep.missing_files), false, p) {
+                if rep.missing_files > 0 && btn(ui, &trf("移除文件丢失的任务 ({})", &[&rep.missing_files]), false, p) {
                     self.engine.prune_missing();
                     self.cache = Some(self.engine.cache_report());
                     self.last_refresh = None;
@@ -3309,9 +3348,9 @@ impl App {
                     pt.rect_filled(r, 0.0, p.hover);
                 }
                 let (k, c) = match it.kind {
-                    CacheKind::Active => ("下载中", p.accent),
-                    CacheKind::Deleted => ("回收站", p.orange),
-                    CacheKind::Orphan => ("孤儿", p.red),
+                    CacheKind::Active => (tr("下载中"), p.accent),
+                    CacheKind::Deleted => (tr("回收站"), p.orange),
+                    CacheKind::Orphan => (tr("孤儿"), p.red),
                 };
                 pt.text(pos2(r.left() + 20.0, r.center().y), Align2::LEFT_CENTER, k, font(12.0), c);
                 pt.text(pos2(r.left() + 80.0, r.center().y), Align2::LEFT_CENTER, bytes(it.bytes), font(12.0), p.text);
@@ -3322,7 +3361,7 @@ impl App {
 
     fn about(&mut self, ui: &mut Ui, p: &Pal) {
         ui.add_space(28.0);
-        ui.label(RichText::new("关于").font(bold(14.5)).color(p.text));
+        ui.label(RichText::new(tr("关于")).font(bold(14.5)).color(p.text));
         ui.add_space(8.0);
         let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 150.0), Sense::hover());
@@ -3345,9 +3384,9 @@ impl App {
         let privacy = "https://github.com/shuakami/gagadown/blob/main/docs/privacy-policy.md";
         let dir = self.engine.data_dir().to_path_buf();
         for (key, label, tip) in [
-            ("about_dir", "打开数据目录", "设置、任务记录和日志都在这里"),
+            ("about_dir", tr("打开数据目录"), tr("设置、任务记录和日志都在这里")),
             ("about_repo", "GitHub", repo),
-            ("about_privacy", "隐私政策", privacy),
+            ("about_privacy", tr("隐私政策"), privacy),
         ] {
             let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, label, font(12.5), p.accent, w);
             let resp = ui.interact(lr.expand(3.0), Id::new(key), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).tip(tip);
@@ -3365,7 +3404,7 @@ impl App {
         }
         let done = self.views.iter().filter(|v| v.status == Status::Completed);
         let (n, total) = done.fold((0usize, 0u64), |(n, t), v| (n + 1, t + v.size.unwrap_or(0)));
-        pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, format!("已完成 {n} 个下载，共 {}", bytes(total)), font(12.0), p.weak);
+        pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, trf("已完成 {} 个下载，共 {}", &[&n, &bytes(total)]), font(12.0), p.weak);
     }
 
     fn settings_page(&mut self, ui: &mut Ui, p: &Pal) {
@@ -3378,71 +3417,83 @@ impl App {
                 ui.vertical(|ui| {
                     ui.set_width(w);
                     ui.add_space(36.0);
-                    ui.label(RichText::new("设置").font(bold(22.0)).color(p.text));
+                    ui.label(RichText::new(tr("设置")).font(bold(22.0)).color(p.text));
                     let d = &mut self.draft;
-                    group(ui, p, "常规", |ui, first| {
-                        srow(ui, p, first, "开机自启", "", 52.0, |ui| toggle(ui, &mut d.launch_at_login, p));
-                        srow(ui, p, first, "开机时静默启动", "开机自启时只在托盘运行，不弹出主窗口", 56.0, |ui| {
+                    group(ui, p, tr("常规"), |ui, first| {
+                        srow(ui, p, first, tr("开机自启"), "", 52.0, |ui| toggle(ui, &mut d.launch_at_login, p));
+                        srow(ui, p, first, tr("开机时静默启动"), tr("开机自启时只在托盘运行，不弹出主窗口"), 56.0, |ui| {
                             ui.add_enabled_ui(d.launch_at_login, |ui| toggle(ui, &mut d.start_minimized, p));
                         });
+                        srow(ui, p, first, tr("语言"), tr("界面语言；跟随系统按系统语言显示"), 52.0, |ui| {
+                            egui::ComboBox::from_id_salt("lang").width(160.0).selected_text(lang_pref_label(d.language)).show_ui(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                for (pref, label) in lang_options() {
+                                    if menu_choice(ui, label, d.language == pref, p) {
+                                        d.language = pref;
+                                        lang::set_pref(pref);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        });
                     });
-                    group(ui, p, "下载", |ui, first| {
-                        srow(ui, p, first, "下载目录", "", 52.0, |ui| {
-                            if btn(ui, "更改", false, p) {
+                    group(ui, p, tr("下载"), |ui, first| {
+                        srow(ui, p, first, tr("下载目录"), "", 52.0, |ui| {
+                            if btn(ui, tr("更改"), false, p) {
                                 if let Some(x) = rfd::FileDialog::new().set_directory(&d.download_dir).pick_folder() {
                                     d.download_dir = x;
                                 }
                             }
                             ui.add(egui::Label::new(RichText::new(d.download_dir.display().to_string()).size(13.0).color(p.text)).truncate());
                         });
-                        srow(ui, p, first, "缓存目录", "", 52.0, |ui| {
-                            if btn(ui, "更改", false, p) {
+                        srow(ui, p, first, tr("缓存目录"), "", 52.0, |ui| {
+                            if btn(ui, tr("更改"), false, p) {
                                 if let Some(x) = rfd::FileDialog::new().set_directory(d.cache_dir.as_ref().unwrap_or(&d.download_dir)).pick_folder() {
                                     d.cache_dir = Some(x);
                                 }
                             }
-                            if d.cache_dir.is_some() && btn(ui, "默认", false, p) {
+                            if d.cache_dir.is_some() && btn(ui, tr("默认"), false, p) {
                                 d.cache_dir = None;
                             }
                             let (t, c) = match &d.cache_dir {
                                 Some(x) => (x.display().to_string(), p.text),
-                                None => ("下载目录".into(), p.weak),
+                                None => (tr("下载目录").into(), p.weak),
                             };
                             ui.add(egui::Label::new(RichText::new(t).size(13.0).color(c)).truncate());
                         });
-                        srow(ui, p, first, "同时下载任务", "超出的任务会排队", 56.0, |ui| {
+                        srow(ui, p, first, tr("同时下载任务"), tr("超出的任务会排队"), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.max_concurrent_tasks).range(1..=64));
                         });
-                        srow(ui, p, first, "初始连接数", "每个任务开始时的连接数", 56.0, |ui| {
+                        srow(ui, p, first, tr("初始连接数"), tr("每个任务开始时的连接数"), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.initial_connections).range(1..=256));
                         });
-                        srow(ui, p, first, "单任务最大连接数", "自动调节的上限", 56.0, |ui| {
+                        srow(ui, p, first, tr("单任务最大连接数"), tr("自动调节的上限"), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.max_connections_per_task).range(1..=256));
                         });
-                        srow(ui, p, first, "全局最大连接数", "所有任务合计", 56.0, |ui| {
+                        srow(ui, p, first, tr("全局最大连接数"), tr("所有任务合计"), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.max_connections_total).range(1..=4096));
                         });
-                        srow(ui, p, first, "最小分段", "小于这个大小不再切分", 56.0, |ui| {
+                        srow(ui, p, first, tr("最小分段"), tr("小于这个大小不再切分"), 56.0, |ui| {
                             let mut kb = d.min_split_size / 1024;
                             if ui.add(egui::DragValue::new(&mut kb).range(64..=65536).suffix(" KB")).changed() {
                                 d.min_split_size = kb * 1024;
                             }
                         });
-                        srow(ui, p, first, "限速", "0 为不限", 56.0, |ui| {
+                        srow(ui, p, first, tr("限速"), tr("0 为不限"), 56.0, |ui| {
                             let mut kb = d.speed_limit / 1024;
                             if ui.add(egui::DragValue::new(&mut kb).range(0..=10_000_000).suffix(" KB/s")).changed() {
                                 d.speed_limit = kb * 1024;
                             }
                         });
-                        srow(ui, p, first, "分段重试次数", "", 52.0, |ui| {
+                        srow(ui, p, first, tr("分段重试次数"), "", 52.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.segment_retries).range(0..=1000));
                         });
-                        srow(ui, p, first, "任务自动重试次数", "", 52.0, |ui| {
+                        srow(ui, p, first, tr("任务自动重试次数"), "", 52.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.task_auto_retries).range(0..=100));
                         });
                     });
-                    group(ui, p, "网络", |ui, first| {
-                        srow(ui, p, first, "代理模式", "", 52.0, |ui| {
+                    group(ui, p, tr("网络"), |ui, first| {
+                        srow(ui, p, first, tr("代理模式"), "", 52.0, |ui| {
                             egui::ComboBox::from_id_salt("pmode").width(230.0).selected_text(d.proxy.mode.label()).show_ui(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = 1.0;
                                 for m in ProxyMode::ALL {
@@ -3453,17 +3504,17 @@ impl App {
                                 }
                             });
                         });
-                        srow(ui, p, first, "代理地址", "每行一个", 92.0, |ui| {
+                        srow(ui, p, first, tr("代理地址"), tr("每行一个"), 92.0, |ui| {
                             ui.add(egui::TextEdit::multiline(&mut self.draft_proxies).hint_text("http://127.0.0.1:7890").desired_rows(3).desired_width(260.0));
                         });
-                        srow(ui, p, first, "自动探测本机代理", "扫描 Clash、v2rayN 等常用端口", 56.0, |ui| toggle(ui, &mut d.proxy.auto_detect, p));
-                        srow(ui, p, first, "使用系统代理", "", 52.0, |ui| toggle(ui, &mut d.proxy.use_system, p));
-                        srow(ui, p, first, "直连等待", "超时后同时尝试代理", 56.0, |ui| {
+                        srow(ui, p, first, tr("自动探测本机代理"), tr("扫描 Clash、v2rayN 等常用端口"), 56.0, |ui| toggle(ui, &mut d.proxy.auto_detect, p));
+                        srow(ui, p, first, tr("使用系统代理"), "", 52.0, |ui| toggle(ui, &mut d.proxy.use_system, p));
+                        srow(ui, p, first, tr("直连等待"), tr("超时后同时尝试代理"), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.proxy.hedge_delay_ms).range(0..=30000).suffix(" ms"));
                         });
                         let found = self.engine.detected_proxies();
-                        let desc = if found.is_empty() { "无".to_string() } else { found.join("  ") };
-                        srow(ui, p, first, "已发现代理", &desc, 56.0, |ui| {
+                        let desc = if found.is_empty() { tr("无").to_string() } else { found.join("  ") };
+                        srow(ui, p, first, tr("已发现代理"), &desc, 56.0, |ui| {
                             if self.engine.is_detecting() {
                                 ui.spinner();
                             }
@@ -3472,25 +3523,25 @@ impl App {
                             ui.add(egui::TextEdit::singleline(&mut d.user_agent).desired_width(300.0));
                         });
                     });
-                    group(ui, p, "浏览器", |ui, first| {
-                        srow(ui, p, first, "接管最小文件", "小于这个大小交给浏览器下载", 56.0, |ui| {
+                    group(ui, p, tr("浏览器"), |ui, first| {
+                        srow(ui, p, first, tr("接管最小文件"), tr("小于这个大小交给浏览器下载"), 56.0, |ui| {
                             let mut kb = d.takeover_min_size / 1024;
                             if ui.add(egui::DragValue::new(&mut kb).range(0..=10_000_000).suffix(" KB")).changed() {
                                 d.takeover_min_size = kb * 1024;
                             }
                         });
-                        srow(ui, p, first, "本地端口", "重启后生效", 56.0, |ui| {
+                        srow(ui, p, first, tr("本地端口"), tr("重启后生效"), 56.0, |ui| {
                             ui.add(egui::DragValue::new(&mut d.api_port).range(1024..=65535));
                         });
                     });
-                    group(ui, p, "清理", |ui, first| {
-                        srow(ui, p, first, "回收站保留", "", 52.0, |ui| {
-                            ui.add(egui::DragValue::new(&mut d.deleted_retention_days).range(0..=3650).suffix(" 天"));
+                    group(ui, p, tr("清理"), |ui, first| {
+                        srow(ui, p, first, tr("回收站保留"), "", 52.0, |ui| {
+                            ui.add(egui::DragValue::new(&mut d.deleted_retention_days).range(0..=3650).suffix(tr(" 天")));
                         });
-                        srow(ui, p, first, "孤儿文件自动清理", "0 为不清理", 56.0, |ui| {
-                            ui.add(egui::DragValue::new(&mut d.orphan_auto_clean_days).range(0..=3650).suffix(" 天"));
+                        srow(ui, p, first, tr("孤儿文件自动清理"), tr("0 为不清理"), 56.0, |ui| {
+                            ui.add(egui::DragValue::new(&mut d.orphan_auto_clean_days).range(0..=3650).suffix(tr(" 天")));
                         });
-                        srow(ui, p, first, "完成后刷盘", "确保文件完整写入磁盘", 56.0, |ui| toggle(ui, &mut d.sync_on_complete, p));
+                        srow(ui, p, first, tr("完成后刷盘"), tr("确保文件完整写入磁盘"), 56.0, |ui| toggle(ui, &mut d.sync_on_complete, p));
                     });
                     self.about(ui, p);
                     ui.add_space(48.0);
@@ -3541,7 +3592,7 @@ impl App {
             ui.set_opacity(a);
             ui.set_width(520.0);
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new("错误报告").font(bold(15.0)).color(p.text));
+            ui.label(RichText::new(tr("错误报告")).font(bold(15.0)).color(p.text));
             ui.add_space(2.0);
             ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.weak)).truncate());
             ui.add_space(12.0);
@@ -3559,10 +3610,10 @@ impl App {
             let shut = Rect::from_min_size(pos2(copy.left() - 84.0, row.top()), vec2(76.0, 30.0));
             let cr = ui.interact(copy, Id::new("er-copy"), Sense::click());
             ui.painter().rect_filled(copy, CornerRadius::same(6), if cr.hovered() { blend(p.accent, Color32::BLACK, 0.88) } else { p.accent });
-            ui.painter().text(copy.center(), Align2::CENTER_CENTER, "复制报告", font(13.0), Color32::WHITE);
+            ui.painter().text(copy.center(), Align2::CENTER_CENTER, tr("复制报告"), font(13.0), Color32::WHITE);
             let sr = ui.interact(shut, Id::new("er-close"), Sense::click());
             ui.painter().rect_filled(shut, CornerRadius::same(6), p.text.gamma_multiply(if sr.hovered() { 0.1 } else { 0.06 }));
-            ui.painter().text(shut.center(), Align2::CENTER_CENTER, "关闭", font(13.0), p.text);
+            ui.painter().text(shut.center(), Align2::CENTER_CENTER, tr("关闭"), font(13.0), p.text);
             if cr.clicked() && !closing {
                 ui.ctx().copy_text(report.clone());
             }
@@ -3590,19 +3641,21 @@ impl App {
             ui.set_opacity(a);
             ui.set_width(340.0);
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new("删除任务").font(bold(15.0)).color(p.text));
+            ui.label(RichText::new(tr("删除任务")).font(bold(15.0)).color(p.text));
             ui.add_space(2.0);
             ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.weak)).truncate());
             ui.add_space(14.0);
             if mock_item {
-                ui.label(RichText::new("开发预览任务没有真实文件，只会移除这条模拟记录。").size(12.0).color(p.weak));
+                ui.label(RichText::new(tr("开发预览任务没有真实文件，只会移除这条模拟记录。")).size(12.0).color(p.weak));
                 ui.add_space(8.0);
             }
-            let options: &[(RemoveMode, &str)] = if mock_item {
-                &[(RemoveMode::KeepFiles, "移除模拟任务")]
-            } else {
-                &[(RemoveMode::KeepFiles, "只删除任务，保留文件"), (RemoveMode::TrashFiles, "文件移到回收站"), (RemoveMode::DeleteFiles, "彻底删除文件")]
-            };
+            let mock_only = [(RemoveMode::KeepFiles, tr("移除模拟任务"))];
+            let all_modes = [
+                (RemoveMode::KeepFiles, tr("只删除任务，保留文件")),
+                (RemoveMode::TrashFiles, tr("文件移到回收站")),
+                (RemoveMode::DeleteFiles, tr("彻底删除文件")),
+            ];
+            let options: &[(RemoveMode, &str)] = if mock_item { &mock_only } else { &all_modes };
             for &(mode, label) in options {
                 let (r, resp) = ui.allocate_exact_size(vec2(340.0, 34.0), Sense::click());
                 let on = mock_item || self.remove_mode == mode;
@@ -3627,10 +3680,10 @@ impl App {
             let okr = ui.interact(ok, Id::new("rm-ok"), Sense::click());
             let base = if danger { p.red } else { p.accent };
             ui.painter().rect_filled(ok, CornerRadius::same(6), if okr.hovered() { blend(base, Color32::BLACK, 0.88) } else { base });
-            ui.painter().text(ok.center(), Align2::CENTER_CENTER, if mock_item { "移除预览" } else { "删除" }, font(13.0), Color32::WHITE);
+            ui.painter().text(ok.center(), Align2::CENTER_CENTER, if mock_item { tr("移除预览") } else { tr("删除") }, font(13.0), Color32::WHITE);
             let cr = ui.interact(cancel, Id::new("rm-cancel"), Sense::click());
             ui.painter().rect_filled(cancel, CornerRadius::same(6), p.text.gamma_multiply(if cr.hovered() { 0.1 } else { 0.06 }));
-            ui.painter().text(cancel.center(), Align2::CENTER_CENTER, "取消", font(13.0), p.text);
+            ui.painter().text(cancel.center(), Align2::CENTER_CENTER, tr("取消"), font(13.0), p.text);
             if !closing && (okr.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter))) {
                 if self.page == Page::Downloads && self.views.len() == 1 && self.handoff_fails.is_empty() {
                     self.welcome_transition_pending = true;
@@ -3776,7 +3829,7 @@ impl App {
                 .with_decorations(false)
                 .with_resizable(false)
                 .with_always_on_top()
-                .with_app_id("dev.gagadown.GaGaDown")
+                .with_app_id("io.github.shuakami.GaGaDown")
                 .with_icon(self.icon.clone());
             let mut close = false;
             ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("popup", pop.key)), builder, |ui, _| {
@@ -3822,7 +3875,7 @@ impl App {
             let pt = ui.painter().clone();
             self.paint_file(&ctx, &pt, pos2(b.left() + 18.0, b.top() + 18.0), 36.0, &pop.name, None, p, 1.0);
             text_line(&pt, pos2(b.left() + 48.0, b.top() + 9.0), Align2::LEFT_CENTER, &pop.name, bold(14.0), p.text, b.width() - 48.0);
-            let size = pop.size.map(bytes).unwrap_or_else(|| "大小未知".into());
+            let size = pop.size.map(bytes).unwrap_or_else(|| tr("大小未知").into());
             text_line(&pt, pos2(b.left() + 48.0, b.top() + 28.0), Align2::LEFT_CENTER, format!("{size}   {}", pop.host), font(12.0), p.weak, b.width() - 48.0);
             let by = b.top() + 56.0;
             let bar = Rect::from_min_size(pos2(b.left(), by), vec2(b.width(), 4.0));
@@ -3831,15 +3884,15 @@ impl App {
                 let t = since_on(&ctx, Id::new(("pending_err", pop.key)), true).unwrap_or(1.0);
                 let k = ease_out_cubic((t / 0.5).min(1.0));
                 pt.rect_filled(bar, CornerRadius::same(2), blend(p.red, p.accent, k));
-                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, format!("无法接管：{err}"), font(12.0), p.red, b.width());
-                text_line(&pt, pos2(b.left(), by + 40.0), Align2::LEFT_CENTER, "已交给浏览器继续下载", font(12.0), p.weak, b.width() - 90.0);
-                "关闭"
+                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, trf("无法接管：{}", &[&err]), font(12.0), p.red, b.width());
+                text_line(&pt, pos2(b.left(), by + 40.0), Align2::LEFT_CENTER, tr("已交给浏览器继续下载"), font(12.0), p.weak, b.width() - 90.0);
+                tr("关闭")
             } else {
                 let now = ctx.input(|i| i.time);
                 ctx.data_mut(|d| d.insert_temp(Id::new(("pend", pop.key)), now));
                 indeterminate(&pt, bar, ctx.input(|i| i.time), p.accent);
-                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, "正在连接…", font(12.0), p.weak, b.width());
-                "取消"
+                text_line(&pt, pos2(b.left(), by + 22.0), Align2::LEFT_CENTER, tr("正在连接…"), font(12.0), p.weak, b.width());
+                tr("取消")
             };
             let r = Rect::from_min_size(pos2(b.right() - 76.0, b.bottom() - 28.0), vec2(76.0, 28.0));
             if btn_at(ui, r, Id::new(("pending_btn", pop.key)), label, false, p) {
@@ -3889,7 +3942,7 @@ impl App {
                 pt.add(Shape::line(vec![m(-3.4, 0.2), m(-1.1, 2.5), m(3.5, -2.3)], Stroke::new(1.6 * badge.min(1.0), Color32::WHITE)));
             }
             text_line(&pt, pos2(b.left() + 48.0, b.top() + 9.0), Align2::LEFT_CENTER, &v.filename, bold(14.0), p.text, b.width() - 48.0);
-            let size = v.size.map(bytes).unwrap_or_else(|| "大小未知".into());
+            let size = v.size.map(bytes).unwrap_or_else(|| tr("大小未知").into());
             text_line(&pt, pos2(b.left() + 48.0, b.top() + 28.0), Align2::LEFT_CENTER, format!("{size}   {}", v.host), font(12.0), p.weak, b.width() - 48.0);
 
             let by = b.top() + 56.0;
@@ -3907,21 +3960,21 @@ impl App {
             if ok {
                 let a = since.map_or(1.0, |t| ease_out_cubic((t - 0.35) / 0.4));
                 let y = by + 22.0 + (1.0 - a) * 6.0;
-                let r1 = text_line(&pt, pos2(b.left(), y), Align2::LEFT_CENTER, "下载完成", font(12.5), p.green.gamma_multiply(a), 120.0);
+                let r1 = text_line(&pt, pos2(b.left(), y), Align2::LEFT_CENTER, tr("下载完成"), font(12.5), p.green.gamma_multiply(a), 120.0);
                 let mut extra = Vec::new();
                 if let Some(fin) = v.finished_at {
-                    extra.push(format!("用时 {}", dur(fin.saturating_sub(v.created_at).max(1))));
+                    extra.push(trf("用时 {}", &[&dur(fin.saturating_sub(v.created_at).max(1))]));
                 }
                 if v.avg_speed > 0.0 {
-                    extra.push(format!("平均 {}", speed(v.avg_speed)));
+                    extra.push(trf("平均 {}", &[&speed(v.avg_speed)]));
                 }
                 text_line(&pt, pos2(r1.right() + 12.0, y), Align2::LEFT_CENTER, extra.join("   "), font(12.0), p.weak.gamma_multiply(a), b.right() - r1.right() - 12.0);
             } else {
                 let sp = speed(spring(&ctx, key.with("spd"), v.speed as f32, 5.0, 0.0) as f64);
                 let (line, lc) = match v.status {
                     Status::Running => match v.eta_secs {
-                        Some(e) => (format!("{sp}   剩余 {}   {} 连接", dur(e), v.connections), p.weak),
-                        None => (format!("{sp}   {} 连接", v.connections), p.weak),
+                        Some(e) => (trf("{}   剩余 {}   {} 连接", &[&sp, &dur(e), &v.connections]), p.weak),
+                        None => (trf("{}   {} 连接", &[&sp, &v.connections]), p.weak),
                     },
                     _ => meta_line(v, p),
                 };
@@ -3930,12 +3983,12 @@ impl App {
             }
 
             let buttons: Vec<(&str, bool, Option<Act>)> = match v.status {
-                Status::Completed if !v.file_missing => vec![("打开所在文件夹", false, Some(Act::Reveal)), ("打开", true, Some(Act::Open))],
-                Status::Running | Status::Queued => vec![("取消", false, None), ("暂停", true, Some(Act::Pause))],
-                Status::Paused => vec![("取消", false, None), ("继续", true, Some(Act::Resume))],
-                _ => vec![("取消", false, None), ("重试", true, Some(Act::Resume))],
+                Status::Completed if !v.file_missing => vec![(tr("打开所在文件夹"), false, Some(Act::Reveal)), (tr("打开"), true, Some(Act::Open))],
+                Status::Running | Status::Queued => vec![(tr("取消"), false, None), (tr("暂停"), true, Some(Act::Pause))],
+                Status::Paused => vec![(tr("取消"), false, None), (tr("继续"), true, Some(Act::Resume))],
+                _ => vec![(tr("取消"), false, None), (tr("重试"), true, Some(Act::Resume))],
             };
-            let show = "在主界面中显示";
+            let show = tr("在主界面中显示");
             let sw = pt.layout_no_wrap(show.to_string(), font(12.5), p.text).size().x + 28.0;
             let sr = Rect::from_min_size(pos2(b.left(), b.bottom() - 28.0), vec2(sw, 28.0));
             if btn_at(ui, sr, Id::new(("popup_show", v.id)), show, false, p) {
@@ -4189,7 +4242,7 @@ fn main() -> eframe::Result {
         let ae = api_error.clone();
         rt.spawn(async move {
             if let Err(x) = gagadown_core::api::serve(e, port).await {
-                *ae.lock() = Some(format!("浏览器插件端口 {port} 不可用：{x}"));
+                *ae.lock() = Some(trf("浏览器插件端口 {} 不可用：{}", &[&port, &x]));
             }
         });
     }
@@ -4198,7 +4251,7 @@ fn main() -> eframe::Result {
     let mut opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("GaGaDown")
-            .with_app_id("dev.gagadown.GaGaDown")
+            .with_app_id("io.github.shuakami.GaGaDown")
             .with_inner_size([1120.0, 720.0])
             .with_min_inner_size([760.0, 480.0])
             .with_decorations(false)

@@ -1,6 +1,7 @@
 //! Local HTTP API used by the browser extension. Bound to 127.0.0.1 only; requests that
 //! carry a web-page Origin are refused so random sites can't push downloads.
 use crate::engine::{Engine, PopupEvent};
+use crate::lang::{tr, trf};
 use crate::probe::filename_from_url;
 use crate::error::ErrorKind;
 use crate::request::RequestSpec;
@@ -121,7 +122,7 @@ async fn add(State(e): State<Engine>, Json(body): Json<BrowserAdd>) -> impl Into
         let key = Uuid::new_v4();
         let url = &body.req.url;
         let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
-        let filename = body.req.filename.clone().filter(|s| !s.trim().is_empty()).or_else(|| filename_from_url(url)).unwrap_or_else(|| "下载".into());
+        let filename = body.req.filename.clone().filter(|s| !s.trim().is_empty()).or_else(|| filename_from_url(url)).unwrap_or_else(|| tr("下载").into());
         e.push_popup(PopupEvent::Pending { key, filename, size: body.req.size_hint, host });
         key
     });
@@ -150,8 +151,8 @@ fn unsupported_scheme(url: &str) -> Option<&'static str> {
     let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase()).unwrap_or_default();
     match scheme.as_str() {
         "http" | "https" => None,
-        "blob" => Some("这是网页播放器生成的视频流，没有可以直接下载的文件地址"),
-        _ => Some("不支持这种链接，只能下载 http/https 地址"),
+        "blob" => Some(tr("这是网页播放器生成的视频流，没有可以直接下载的文件地址")),
+        _ => Some(tr("不支持这种链接，只能下载 http/https 地址")),
     }
 }
 
@@ -204,18 +205,18 @@ async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
         Ok(Err(err)) => {
             // Let the browser keep the download: it owns the session state we could not replay.
             let (reason, shown) = match err.kind {
-                ErrorKind::Auth => ("auth", format!("服务器拒绝访问（{}）", err.message)),
-                ErrorKind::NotFound => ("not_found", format!("文件不存在（{}）", err.message)),
+                ErrorKind::Auth => ("auth", trf("服务器拒绝访问（{0}）", &[&err.message])),
+                ErrorKind::NotFound => ("not_found", trf("文件不存在（{0}）", &[&err.message])),
                 _ => ("probe_failed", err.message.clone()),
             };
             return fail(format!("{reason}: {}", err.message), shown, None);
         }
-        Err(_) => return fail("probe_timeout", format!("连接超时，{} 秒内服务器没有响应", PROBE_BUDGET.as_secs()), None),
+        Err(_) => return fail("probe_timeout", trf("连接超时，{0} 秒内服务器没有响应", &[&PROBE_BUDGET.as_secs()]), None),
     };
     let min = e.settings().takeover_min_size;
     if crate::download::is_web_page(&probe) {
         if body.force {
-            return fail("web_page", "这个地址打开的是网页，不是文件", probe.size);
+            return fail("web_page", tr("这个地址打开的是网页，不是文件"), probe.size);
         }
         return reject("web_page", probe.size);
     }

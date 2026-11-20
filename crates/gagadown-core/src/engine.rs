@@ -1,6 +1,7 @@
 use crate::config::Settings;
 use crate::download::{self, part_path, Shared, PART_EXT};
 use crate::error::{DlError, DlResult, ErrorKind};
+use crate::lang::{tr, trf};
 use crate::limiter::Limiter;
 use crate::probe::{sanitize_filename, ProbeInfo};
 use crate::request::RequestSpec;
@@ -192,7 +193,7 @@ impl Inner {
                 r.next_retry_at = None;
                 let name = r.filename.clone();
                 drop(r);
-                self.notify(format!("下载完成 {name}"));
+                self.notify(trf("下载完成 {0}", &[&name]));
             }
             Err(e) if e.kind == ErrorKind::Cancelled || reason != StopReason::None as u8 => {
                 r.status = if reason == StopReason::Shutdown as u8 { Status::Queued } else { Status::Paused };
@@ -208,11 +209,11 @@ impl Inner {
                     r.next_retry_at = None;
                 }
                 let reason = crate::error::summary(e.kind, e.status, &e.message);
-                let line = format!("失败: {reason}");
+                let line = trf("失败: {0}", &[&reason]);
                 r.log.push(LogLine { at: now_secs(), text: line });
                 let name = r.filename.clone();
                 drop(r);
-                self.notify(format!("下载失败 {name}: {reason}"));
+                self.notify(trf("下载失败 {0}: {1}", &[&name, &reason]));
             }
         }
         *entry.run.lock() = None;
@@ -258,22 +259,23 @@ impl Engine {
             .create(true).truncate(false).read(true).write(true)
             .open(data_dir.join("engine.lock"))?;
         fs4::FileExt::try_lock(&instance_lock)
-            .map_err(|e| DlError::new(ErrorKind::AlreadyRunning, format!("GaGaDown 已在运行：{e}")))?;
+            .map_err(|e| DlError::new(ErrorKind::AlreadyRunning, trf("GaGaDown 已在运行：{0}", &[&e])))?;
         let state_cipher = crate::secure_state::StateCipher::load_or_create()
-            .map_err(|e| DlError::new(ErrorKind::Io, format!("无法安全访问系统密钥环，GaGaDown 未读取任务记录：{e}")))?;
+            .map_err(|e| DlError::new(ErrorKind::Io, trf("无法安全访问系统密钥环，GaGaDown 未读取任务记录：{0}", &[&e])))?;
         let api_token = crate::secure_state::load_or_create_api_token()
-            .map_err(|e| DlError::new(ErrorKind::Io, format!("无法创建浏览器插件配对密钥：{e}")))?;
+            .map_err(|e| DlError::new(ErrorKind::Io, trf("无法创建浏览器插件配对密钥：{0}", &[&e])))?;
         let settings: Settings = read_json::<Settings>(&data_dir.join("settings.json")).unwrap_or_default().sanitized();
+        crate::lang::set_pref(settings.language);
         let state_path = data_dir.join("state.json");
         let state: State = if state_path.exists() {
             let stored = std::fs::read(&state_path)?;
             let (plain, encrypted) = state_cipher.decrypt_or_legacy(&stored)
-                .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录解密失败：{e}")))?;
+                .map_err(|e| DlError::new(ErrorKind::Io, trf("任务记录解密失败：{0}", &[&e])))?;
             let state: State = serde_json::from_slice(&plain)
-                .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录格式无效：{e}")))?;
+                .map_err(|e| DlError::new(ErrorKind::Io, trf("任务记录格式无效：{0}", &[&e])))?;
             if !encrypted {
                 let ciphered = state_cipher.encrypt(&plain)
-                    .map_err(|e| DlError::new(ErrorKind::Io, format!("无法加密旧任务记录：{e}")))?;
+                    .map_err(|e| DlError::new(ErrorKind::Io, trf("无法加密旧任务记录：{0}", &[&e])))?;
                 atomic_write(&state_path, &ciphered)?;
             }
             state
@@ -348,6 +350,7 @@ impl Engine {
 
     pub fn set_settings(&self, s: Settings) -> DlResult<()> {
         let s = s.sanitized();
+        crate::lang::set_pref(s.language);
         download::set_cache_dir(s.cache_dir.clone());
         let old = self.settings();
         self.inner.limiter.set_rate(s.speed_limit);
@@ -457,7 +460,7 @@ impl Engine {
                         r.next_retry_at = None;
                         r.auto_retries += 1;
                         r.status = Status::Queued;
-                        let line = format!("自动重试（第 {} 次）", r.auto_retries);
+                        let line = trf("自动重试（第 {0} 次）", &[&r.auto_retries]);
                         r.log.push(LogLine { at: now, text: line });
                     }
                 }
@@ -506,7 +509,7 @@ impl Engine {
         let st = State { tasks, deleted };
         let plain = serde_json::to_vec(&st).map_err(|e| DlError::new(ErrorKind::Io, e.to_string()))?;
         let data = self.inner.state_cipher.encrypt(&plain)
-            .map_err(|e| DlError::new(ErrorKind::Io, format!("任务记录加密失败：{e}")))?;
+            .map_err(|e| DlError::new(ErrorKind::Io, trf("任务记录加密失败：{0}", &[&e])))?;
         atomic_write(&self.inner.data_dir.join("state.json"), &data)?;
         let hosts = self.inner.routes.hosts.lock().clone();
         let data = serde_json::to_vec(&hosts).unwrap_or_default();
@@ -549,9 +552,9 @@ impl Engine {
 
     pub fn add(&self, req: AddRequest, probe: Option<&ProbeInfo>) -> DlResult<AddOutcome> {
         let url = req.url.trim().to_string();
-        let parsed = url::Url::parse(&url).map_err(|e| DlError::new(ErrorKind::Other, format!("链接无效: {e}")))?;
+        let parsed = url::Url::parse(&url).map_err(|e| DlError::new(ErrorKind::Other, trf("链接无效: {0}", &[&e])))?;
         if !matches!(parsed.scheme(), "http" | "https") {
-            return Err(DlError::new(ErrorKind::Other, "只支持 http/https 链接"));
+            return Err(DlError::new(ErrorKind::Other, tr("只支持 http/https 链接")));
         }
         let filename = req
             .filename
@@ -595,7 +598,7 @@ impl Engine {
                     r.status = Status::Queued;
                     r.error = None;
                     r.auto_retries = 0;
-                    r.log.push(LogLine { at: now_secs(), text: "已从浏览器续上新链接".into() });
+                    r.log.push(LogLine { at: now_secs(), text: tr("已从浏览器续上新链接").into() });
                     self.inner.dirty.store(true, Ordering::Relaxed);
                     return Ok(AddOutcome { id: r.id, existed: true, refreshed: true, filename: r.filename.clone() });
                 }
@@ -625,6 +628,7 @@ impl Engine {
             finished_at: None,
             sha256: req.sha256.clone(),
             route: probe.map(|p| p.route.clone()),
+            route_latency_ms: probe.map(|p| p.latency_ms),
             elapsed_secs: 0.0,
             source: req.source.clone().unwrap_or_else(|| "manual".into()),
             log: Vec::new(),
@@ -727,7 +731,7 @@ impl Engine {
             // Never detach a run and then unlink its open file. Preallocation
             // and blocking writes must finish before Windows can reclaim it.
             if tokio::time::timeout(Duration::from_secs(10), &mut j).await.is_err() {
-                self.inner.notify("正在等待磁盘操作结束，结束后将自动继续；无需再次点击");
+                self.inner.notify(tr("正在等待磁盘操作结束，结束后将自动继续；无需再次点击"));
                 let _ = j.await;
             }
         }
@@ -746,8 +750,8 @@ impl Engine {
         };
         self.inner.dirty.store(true, Ordering::Relaxed);
         let reattach = |why: String| {
-            t.log(format!("删除失败，已恢复任务以便重试: {why}"));
-            self.inner.notify(format!("删除失败: {why}"));
+            t.log(trf("删除失败，已恢复任务以便重试: {0}", &[&why]));
+            self.inner.notify(trf("删除失败: {0}", &[&why]));
             let mut tasks = self.inner.tasks.write();
             let i = slot.min(tasks.len());
             tasks.insert(i, t.clone());
@@ -757,7 +761,7 @@ impl Engine {
         };
         let _operation = t.operation.lock().await;
         if !self.stop_and_wait(&t, StopReason::Remove).await {
-            reattach("任务仍在运行".into());
+            reattach(tr("任务仍在运行").into());
             return;
         }
         let rec = t.persistable();
@@ -822,7 +826,7 @@ impl Engine {
             }
             rec.status = Status::Paused;
         }
-        rec.log.push(LogLine { at: now_secs(), text: "已从最近删除恢复".into() });
+        rec.log.push(LogLine { at: now_secs(), text: tr("已从最近删除恢复").into() });
         self.inner.tasks.write().insert(0, Arc::new(TaskEntry { rec: Mutex::new(rec), run: Mutex::new(None), operation: tokio::sync::Mutex::new(()) }));
         self.inner.dirty.store(true, Ordering::Relaxed);
         true
@@ -1049,6 +1053,7 @@ fn view_of(t: &Arc<TaskEntry>, seg_detail: usize) -> TaskView {
         splits: 0,
         history: Vec::new(),
         route: r.route.clone(),
+        route_latency_ms: r.route_latency_ms,
         created_at: r.created_at,
         finished_at: r.finished_at,
         next_retry_at: r.next_retry_at,

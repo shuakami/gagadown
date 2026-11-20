@@ -2,6 +2,7 @@
 //! the winner is cached per host, and running tasks can hop routes when one goes bad.
 use crate::config::{ProxyMode, ProxySettings};
 use crate::error::{DlError, DlResult, ErrorKind};
+use crate::lang::{tr, trf};
 use crate::probe::{probe, ProbeInfo};
 use crate::request::RequestSpec;
 use futures_util::stream::{FuturesUnordered, StreamExt};
@@ -46,7 +47,7 @@ pub fn build_client(proxy: Option<&str>, system: bool) -> DlResult<reqwest::Clie
         .redirect(reqwest::redirect::Policy::limited(20));
     match proxy {
         Some(p) => {
-            let px = reqwest::Proxy::all(p).map_err(|e| DlError::new(ErrorKind::Other, format!("代理地址无效 {p}: {e}")))?;
+            let px = reqwest::Proxy::all(p).map_err(|e| DlError::new(ErrorKind::Other, trf("代理地址无效 {0}: {1}", &[&p, &e])))?;
             b = b.proxy(px);
         }
         None if !system => b = b.no_proxy(),
@@ -117,7 +118,7 @@ impl RouteManager {
 
     fn rebuild(&self) -> DlResult<()> {
         let s = self.settings.read().clone();
-        let mut out = vec![Arc::new(Route { name: DIRECT.into(), proxy: None, client: build_client(None, false)? })];
+        let mut out = vec![Arc::new(Route { name: tr(DIRECT).into(), proxy: None, client: build_client(None, false)? })];
         let mut seen: Vec<String> = Vec::new();
         let mut push = |name: String, p: Option<String>, system: bool, out: &mut Vec<Arc<Route>>| {
             let key = p.clone().unwrap_or_else(|| name.clone());
@@ -134,19 +135,19 @@ impl RouteManager {
         };
         for p in s.proxies.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
             let p = if p.contains("://") { p.to_string() } else { format!("http://{p}") };
-            push(format!("代理 {}", display_proxy(&p)), Some(p), false, &mut out);
+            push(trf("代理 {0}", &[&display_proxy(&p)]), Some(p), false, &mut out);
         }
         if s.auto_detect {
             for p in self.detected.read().iter() {
-                push(format!("本机代理 {}", display_proxy(p)), Some(p.clone()), false, &mut out);
+                push(trf("本机代理 {0}", &[&display_proxy(p)]), Some(p.clone()), false, &mut out);
             }
         }
         if s.use_system {
             if let Some(p) = env_proxy() {
-                push(format!("环境变量代理 {}", display_proxy(&p)), Some(p), false, &mut out);
+                push(trf("环境变量代理 {0}", &[&display_proxy(&p)]), Some(p), false, &mut out);
             }
             if cfg!(any(windows, target_os = "macos")) {
-                push("系统代理".into(), None, true, &mut out);
+                push(tr("系统代理").into(), None, true, &mut out);
             }
         }
         *self.routes.write() = out;
@@ -160,7 +161,7 @@ impl RouteManager {
     pub fn ordered(&self, exclude: Option<&str>) -> Vec<Arc<Route>> {
         let mode = self.settings.read().mode;
         let all = self.routes.read().clone();
-        let (direct, proxies): (Vec<_>, Vec<_>) = all.into_iter().partition(|r| r.name == DIRECT);
+        let (direct, proxies): (Vec<_>, Vec<_>) = all.into_iter().partition(|r| r.name == tr(DIRECT));
         let mut v = match mode {
             ProxyMode::DirectThenProxy => direct.into_iter().chain(proxies).collect::<Vec<_>>(),
             ProxyMode::DirectOnly => direct,
@@ -232,7 +233,7 @@ impl RouteManager {
         }
         let routes = self.ordered(exclude);
         if routes.is_empty() {
-            return Err(DlError::new(ErrorKind::Network, "没有可用线路（仅代理模式但未配置或探测到代理）"));
+            return Err(DlError::new(ErrorKind::Network, tr("没有可用线路（仅代理模式但未配置或探测到代理）")));
         }
         let hedge = Duration::from_millis(self.settings.read().hedge_delay_ms.max(100));
         let mut pending = FuturesUnordered::new();
@@ -286,7 +287,7 @@ impl RouteManager {
             .iter()
             .map(|(n, e)| crate::error::RouteFailure { route: n.clone(), status: e.status, message: e.message.clone() })
             .collect();
-        let mut e = errors.into_iter().next().map(|(_, e)| e).unwrap_or_else(|| DlError::new(ErrorKind::Network, "没有可用线路"));
+        let mut e = errors.into_iter().next().map(|(_, e)| e).unwrap_or_else(|| DlError::new(ErrorKind::Network, tr("没有可用线路")));
         e.routes = routes;
         Err(e)
     }

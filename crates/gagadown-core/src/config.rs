@@ -1,3 +1,4 @@
+use crate::lang::tr;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -21,10 +22,10 @@ impl ProxyMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            ProxyMode::DirectThenProxy => "默认直连，失败自动走代理",
-            ProxyMode::DirectOnly => "仅直连",
-            ProxyMode::ProxyThenDirect => "优先代理，失败回退直连",
-            ProxyMode::ProxyOnly => "仅代理",
+            ProxyMode::DirectThenProxy => tr("默认直连，失败自动走代理"),
+            ProxyMode::DirectOnly => tr("仅直连"),
+            ProxyMode::ProxyThenDirect => tr("优先代理，失败回退直连"),
+            ProxyMode::ProxyOnly => tr("仅代理"),
         }
     }
 }
@@ -88,6 +89,8 @@ pub struct Settings {
     pub launch_at_login: bool,
     /// When launched at login, stay in the tray instead of opening the main window.
     pub start_minimized: bool,
+    /// UI language; `Auto` follows the system locale.
+    pub language: crate::lang::LangPref,
 }
 
 pub const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
@@ -117,6 +120,7 @@ impl Default for Settings {
             cache_dir: None,
             launch_at_login: false,
             start_minimized: false,
+            language: crate::lang::LangPref::Auto,
         }
     }
 }

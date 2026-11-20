@@ -89,6 +89,8 @@ pub struct TaskRecord {
     pub finished_at: Option<u64>,
     pub sha256: Option<String>,
     pub route: Option<String>,
+    #[serde(default)]
+    pub route_latency_ms: Option<u64>,
     pub elapsed_secs: f64,
     pub source: String,
     pub log: Vec<LogLine>,
@@ -167,6 +169,7 @@ pub struct TaskView {
     pub splits: u64,
     pub history: Vec<f32>,
     pub route: Option<String>,
+    pub route_latency_ms: Option<u64>,
     pub created_at: u64,
     pub finished_at: Option<u64>,
     pub next_retry_at: Option<u64>,

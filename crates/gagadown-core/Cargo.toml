@@ -33,6 +33,7 @@ tracing = "0.1.44"
 trash = "5.2.9"
 url = "2.5.8"
 uuid = { version = "1.27.0", features = ["v4", "serde"] }
+sys-locale = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_IO", "Win32_System_Ioctl"] }

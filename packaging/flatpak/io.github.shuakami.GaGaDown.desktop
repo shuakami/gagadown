@@ -2,8 +2,8 @@
 Name=GaGaDown
 Comment=Fast desktop download manager
 Exec=GagaDown
-Icon=dev.gagadown.GaGaDown
-StartupWMClass=GaGaDown
+Icon=io.github.shuakami.GaGaDown
+StartupWMClass=io.github.shuakami.GaGaDown
 Terminal=false
 Type=Application
 Categories=Network;FileTransfer;
