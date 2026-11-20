@@ -125,8 +125,36 @@ jobs:
           name: linux
           path: dist/*
 
+  # Flatpak/Flathub 构建需要离线的 cargo 依赖清单；每个 release 附带一份
+  # 与 tag 对应 Cargo.lock 生成的 cargo-sources.json，Flathub 仓库的
+  # external-data-checker 按 release asset 自动跟进版本。
+  flatpak-sources:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      V: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set version
+        run: bash tools/set-version.sh "$V"
+
+      - name: Generate cargo-sources.json
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-aiohttp python3-toml
+          curl -fsSL -o /tmp/flatpak-cargo-generator.py \
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/41c20aa10819cdb2a4f3ca171758a96d1955c018/cargo/flatpak-cargo-generator.py
+          mkdir -p dist
+          python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o dist/cargo-sources.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-sources
+          path: dist/cargo-sources.json
+
   release:
-    needs: [version, windows, linux, test]
+    needs: [version, windows, linux, test, flatpak-sources]
     runs-on: ubuntu-latest
     env:
       V: ${{ needs.version.outputs.version }}
@@ -202,3 +230,4 @@ jobs:
             dist/GagaDown-${{ env.V }}-src.zip
             dist/GagaDown-windows-setup.exe
             dist/GagaDown-linux-x86_64.tar.gz
+            dist/cargo-sources.json
