@@ -325,7 +325,7 @@ index 991335a..0213bdc 100644
 + "winnow 1.0.4",
 +]
 diff --git a/crates/gagadown-app/Cargo.toml b/crates/gagadown-app/Cargo.toml
-index a4a4364..a792b30 100644
+index a4a4364..03583b5 100644
 --- a/crates/gagadown-app/Cargo.toml
 +++ b/crates/gagadown-app/Cargo.toml
 @@ -32,3 +32,7 @@ tray-icon = "0.26"
@@ -335,9 +335,9 @@ index a4a4364..a792b30 100644
 +
 +[target."cfg(target_os = \"linux\")".dependencies]
 +ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
-+winit = { version = "0.30.13", default-features = false, features = ["x11"] }
++winit = { version = "0.30.13", default-features = false, features = ["x11", "wayland"] }
 diff --git a/crates/gagadown-app/src/main.rs b/crates/gagadown-app/src/main.rs
-index cbfba48..c484ddc 100644
+index cbfba48..829c1d4 100644
 --- a/crates/gagadown-app/src/main.rs
 +++ b/crates/gagadown-app/src/main.rs
 @@ -7,6 +7,7 @@ use eframe::egui::{
@@ -348,7 +348,7 @@ index cbfba48..c484ddc 100644
  use gagadown_core::engine::{CacheKind, CacheReport, Engine, PopupEvent};
  use gagadown_core::task::{now_secs, AddRequest, DeletedRecord, Phase, RemoveMode, Status, TaskView};
  #[cfg(debug_assertions)]
-@@ -17,14 +18,19 @@ use std::sync::Arc;
+@@ -17,14 +18,59 @@ use std::sync::Arc;
  use std::time::{Duration, Instant};
  use uuid::Uuid;
  
@@ -366,10 +366,50 @@ index cbfba48..c484ddc 100644
  const NAV_INDICATOR_HEIGHT: f32 = 48.0;
 -const NAV_INDICATOR_EXTEND: f32 = 24.0;
 +const NAV_INDICATOR_SECS: f32 = 0.28;
++
++/// Wayland can't unmap a mapped window or un-minimize one, so the hide/show
++/// tray commands differ from X11. Set from the chosen winit backend at startup.
++static IS_WAYLAND: AtomicBool = AtomicBool::new(false);
++
++/// The main window lives in this child viewport on Wayland: hiding it means
++/// destroying the window entirely (true hide-to-tray), and the never-mapped
++/// root viewport only hosts the event loop.
++#[cfg(target_os = "linux")]
++fn main_viewport() -> egui::ViewportId {
++    egui::ViewportId::from_hash_of("gagadown-main")
++}
++
++/// Hide the main window to the tray. On Wayland the caller's `hidden` flag is
++/// enough: the next pass stops showing the child viewport and its window is
++/// destroyed. On X11 the root window is withdrawn.
++fn hide_main_window(ctx: &egui::Context) {
++    if IS_WAYLAND.load(Ordering::Relaxed) {
++        ctx.request_repaint();
++    } else {
++        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
++    }
++}
++
++/// Bring the main window back from the tray. On Wayland the window is simply
++/// recreated by the next pass; an activation request covers the case where it
++/// still exists but is minimized (the compositor may only set a hint).
++fn show_main_window(ctx: &egui::Context) {
++    if IS_WAYLAND.load(Ordering::Relaxed) {
++        ctx.send_viewport_cmd_to(
++            main_viewport(),
++            ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical),
++        );
++    } else {
++        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
++        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
++        ctx.send_viewport_cmd(ViewportCommand::Focus);
++    }
++}
++
  #[cfg(debug_assertions)]
  const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
  #[cfg(not(debug_assertions))]
-@@ -206,45 +212,27 @@ impl NavIndicator {
+@@ -206,45 +252,27 @@ impl NavIndicator {
      }
  
      fn sample(&mut self, now: Instant) -> (f32, f32, bool) {
@@ -430,7 +470,7 @@ index cbfba48..c484ddc 100644
          };
          let y = (top + bottom) * 0.5;
          let height = bottom - top;
-@@ -313,7 +301,7 @@ impl MockDownloadPreview {
+@@ -313,7 +341,7 @@ impl MockDownloadPreview {
          let speed = if running { Self::SIZE as f64 / Self::DURATION as f64 } else { 0.0 };
          TaskView {
              id: self.id,
@@ -439,7 +479,7 @@ index cbfba48..c484ddc 100644
              url: "mock://dev-preview/animation.bin".into(),
              host: "dev-preview.local".into(),
              dir: std::path::PathBuf::new(),
-@@ -331,6 +319,7 @@ impl MockDownloadPreview {
+@@ -331,6 +359,7 @@ impl MockDownloadPreview {
              splits: 3,
              history: Vec::new(),
              route: Some("DEV MOCK".into()),
@@ -447,7 +487,19 @@ index cbfba48..c484ddc 100644
              created_at: self.created_at,
              finished_at: (progress >= 1.0).then_some(self.created_at + elapsed as u64),
              next_retry_at: None,
-@@ -435,24 +424,24 @@ fn speed(s: f64) -> String {
+@@ -393,6 +422,11 @@ struct App {
+     tray: Option<Box<dyn std::any::Any>>,
+     quit: Arc<AtomicBool>,
+     hidden: Arc<AtomicBool>,
++    /// Last seen geometry of the main window, restored when its Wayland child
++    /// viewport is recreated after a tray-hide cycle.
++    main_size: Option<[f32; 2]>,
++    main_pos: Option<Pos2>,
++    main_maximized: Option<bool>,
+ }
+ 
+ /// A download popup: `task` is set once the hand-off probe accepted the link.
+@@ -435,24 +469,24 @@ fn speed(s: f64) -> String {
  
  fn dur(s: u64) -> String {
      if s < 60 {
@@ -479,7 +531,7 @@ index cbfba48..c484ddc 100644
      }
  }
  
-@@ -465,30 +454,30 @@ fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError) -> String {
+@@ -465,30 +499,30 @@ fn error_report(v: &TaskView, e: &gagadown_core::task::TaskError) -> String {
      };
      let scrub = |s: &str| s.replace(&v.url, &masked);
      let mut s = String::new();
@@ -519,7 +571,7 @@ index cbfba48..c484ddc 100644
          for l in v.log.iter().rev().take(12).rev() {
              let _ = writeln!(s, "  {}  {}", when(l.at), scrub(&l.text));
          }
-@@ -539,10 +528,10 @@ fn when(ts: u64) -> String {
+@@ -539,10 +573,10 @@ fn when(ts: u64) -> String {
      let now = Local::now();
      let days = now.date_naive().signed_duration_since(t.date_naive()).num_days();
      match days {
@@ -534,7 +586,7 @@ index cbfba48..c484ddc 100644
      }
  }
  
-@@ -619,14 +608,19 @@ fn decode_png(b: &[u8]) -> Option<egui::ColorImage> {
+@@ -619,14 +653,17 @@ fn decode_png(b: &[u8]) -> Option<egui::ColorImage> {
  }
  
  fn route_info(v: &TaskView) -> (Option<String>, Option<u64>) {
@@ -544,24 +596,23 @@ index cbfba48..c484ddc 100644
 -                return (v.route.clone().or(Some(name.to_string())), ms.trim_end_matches(" ms").parse().ok());
 -            }
 -        }
-+    (v.route.clone(), v.route_latency_ms)
-+}
-+
-+fn lang_pref_label(pref: LangPref) -> &'static str {
-+    match pref {
-+        LangPref::Auto => tr("跟随系统"),
-+        LangPref::Zh => "简体中文",
-+        LangPref::En => "English",
-     }
+-    }
 -    (v.route.clone(), None)
++    (v.route.clone(), v.route_latency_ms)
 +}
 +
 +fn lang_options() -> [(LangPref, &'static str); 3] {
 +    [(LangPref::Auto, tr("跟随系统")), (LangPref::Zh, "简体中文"), (LangPref::En, "English")]
++}
++
++#[cfg(target_os = "linux")]
++fn backend_options() -> [(gagadown_core::config::DisplayBackend, &'static str); 2] {
++    use gagadown_core::config::DisplayBackend as B;
++    [(B::X11, "X11 (XWayland)"), (B::Wayland, "Wayland")]
  }
  
  const EXTENSION: &[(&str, &[u8])] = &[
-@@ -640,10 +634,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
+@@ -640,10 +677,8 @@ const EXTENSION: &[(&str, &[u8])] = &[
      ("icons/128.png", include_bytes!("../../../extension/icons/128.png")),
  ];
  
@@ -574,7 +625,7 @@ index cbfba48..c484ddc 100644
  
  struct ExtGuide {
      browser: usize,
-@@ -654,22 +646,35 @@ struct ExtGuide {
+@@ -654,22 +689,35 @@ struct ExtGuide {
  struct Browser {
      key: &'static str,
      name: &'static str,
@@ -622,7 +673,7 @@ index cbfba48..c484ddc 100644
  }
  
  /// Writes the bundled extension into `<data>/extension`, touching only files that changed.
-@@ -817,36 +822,36 @@ fn of(v: &TaskView) -> String {
+@@ -817,36 +865,36 @@ fn of(v: &TaskView) -> String {
  
  fn meta_line(v: &TaskView, p: &Pal) -> (String, Color32) {
      match v.status {
@@ -670,7 +721,7 @@ index cbfba48..c484ddc 100644
              }
              (s, p.red)
          }
-@@ -1070,10 +1075,167 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
+@@ -1070,10 +1118,167 @@ fn speed_graph(ctx: &egui::Context, pt: &Painter, r: Rect, hist: &[f32], p: &Pal
          clip.add(Shape::line(pts, Stroke::new(1.6, p.green)));
      }
      pt.text(r.right_top(), Align2::RIGHT_TOP, speed((max / 1.15) as f64), font(10.5), p.weak);
@@ -838,7 +889,7 @@ index cbfba48..c484ddc 100644
      fn append(path: &Path, line: &str) {
          use std::io::Write;
          if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-@@ -1107,6 +1269,7 @@ fn install_diagnostics(dir: std::path::PathBuf) {
+@@ -1107,6 +1312,7 @@ fn install_diagnostics(dir: std::path::PathBuf) {
              if t > tier {
                  tier = t;
                  append(&freeze, &format!("[{}] 界面线程卡在「{}」已 {secs} 秒\n", now_secs(), eframe::stall::name(stage)));
@@ -846,7 +897,92 @@ index cbfba48..c484ddc 100644
              }
          }
      });
-@@ -1305,8 +1468,8 @@ mod win {
+@@ -1177,6 +1383,84 @@ fn menu_item(ui: &mut Ui, label: &str, danger: bool, p: &Pal) -> bool {
+     resp.clicked()
+ }
+ 
++/// Filled caret triangle rotated `angle` radians clockwise around `c` (egui's
++/// y-down space: positive angle = clockwise). angle=0 points down.
++fn caret_tri(pt: &Painter, c: Pos2, angle: f32, col: Color32) {
++    let (si, co) = angle.sin_cos();
++    let rp = |dx: f32, dy: f32| pos2(c.x + dx * co - dy * si, c.y + dx * si + dy * co);
++    pt.add(egui::Shape::convex_polygon(vec![rp(-5.5, -3.0), rp(5.5, -3.0), rp(0.0, 3.2)], col, Stroke::NONE));
++}
++
++/// Fused dropdown: closed it is a plain rounded button; expanded it paints the
++/// button and the item list as one continuous rounded block in the foreground
++/// layer (shared border, inner divider), and the caret flips.
++fn fused_picker<T: Copy + PartialEq>(ui: &mut Ui, r: Rect, id: Id, cur: T, options: &[(T, &'static str)], p: &Pal) -> Option<T> {
++    const ROW: f32 = 30.0;
++    const PAD: f32 = 4.0;
++    let cur_label = options.iter().find(|(v, _)| *v == cur).map(|(_, l)| *l).unwrap_or("");
++    let ctx = ui.ctx().clone();
++    let key = id.with("open");
++    let mut open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, false));
++    let resp = ui.interact(r, id, Sense::click());
++    if resp.clicked() {
++        open = !open;
++        ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = open);
++    }
++    let union = Rect::from_min_size(r.min, vec2(r.width(), r.height() + PAD + ROW * options.len() as f32 + PAD));
++    let t = ctx.animate_bool_with_time(key.with("t"), open, 0.18);
++    let rot = std::f32::consts::PI * egui::emath::easing::cubic_out(t);
++    let hover_pos = ctx.input(|i| i.pointer.hover_pos());
++    // Whole-button hover tint (no inset chip: that would be a box inside the box).
++    // Fades out while opening, since the expanded header is a title, not an option.
++    let hv = ctx.animate_bool_with_time(key.with("hv"), !open && hover_pos.is_some_and(|pos| r.contains(pos)), 0.1);
++    let tint = p.text.gamma_multiply(0.06 * hv);
++    if t <= 0.0 {
++        ui.painter().rect(r, CornerRadius::same(8), p.input, Stroke::new(1.0, p.line), StrokeKind::Inside);
++        ui.painter().rect_filled(r, CornerRadius::same(8), tint);
++    }
++    ui.painter().text(pos2(r.left() + PAD + 10.0, r.center().y), Align2::LEFT_CENTER, cur_label, font(12.5), p.text);
++    caret_tri(ui.painter(), pos2(r.right() - PAD - 17.0, r.center().y), rot, p.weak);
++    // The overlay Area is shown every frame (empty while closed) so it never
++    // "becomes visible": egui would otherwise fade it in from transparent and
++    // run an invisible sizing pass, which flashes the button on open.
++    let shown = Rect::from_min_size(union.min, vec2(union.width(), egui::lerp(r.height()..=union.height(), egui::emath::easing::cubic_out(t))));
++    let sel = egui::Area::new(id.with("menu")).order(egui::Order::Foreground).fixed_pos(union.min).fade_in(false).interactable(open).show(&ctx, |ui| {
++        if t <= 0.0 {
++            return None;
++        }
++        ui.painter().rect_filled(shown.translate(vec2(0.0, 2.0)), CornerRadius::same(8), Color32::from_black_alpha(50));
++        ui.painter().rect(shown, CornerRadius::same(8), p.input, Stroke::new(1.0, p.line), StrokeKind::Inside);
++        ui.set_clip_rect(shown);
++        let btn_r = Rect::from_min_size(union.min, vec2(union.width(), r.height()));
++        ui.painter().rect_filled(btn_r, CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, tint);
++        if ui.interact(btn_r, id.with("b2"), Sense::click()).clicked() {
++            ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = false);
++        }
++        ui.painter().text(pos2(btn_r.left() + PAD + 10.0, btn_r.center().y), Align2::LEFT_CENTER, cur_label, font(12.5), p.text);
++        caret_tri(ui.painter(), pos2(btn_r.right() - PAD - 17.0, btn_r.center().y), rot, p.weak);
++        ui.painter().hline(btn_r.left()..=btn_r.right(), btn_r.bottom(), Stroke::new(1.0, p.line));
++        let inner = Rect::from_min_max(pos2(union.left() + PAD, btn_r.bottom() + PAD), pos2(union.right() - PAD, union.bottom() - PAD));
++        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::LEFT)));
++        child.set_clip_rect(inner.intersect(shown));
++        child.spacing_mut().item_spacing.y = 1.0;
++        let mut pick = None;
++        for &(v, label) in options {
++            if menu_choice(&mut child, label, cur == v, p) {
++                pick = Some(v);
++            }
++        }
++        pick
++    }).inner;
++    let mut pick = None;
++    if open {
++        pick = sel;
++        if pick.is_some() || (ctx.input(|i| i.pointer.any_click()) && ctx.input(|i| i.pointer.interact_pos()).is_some_and(|pos| !union.contains(pos))) {
++            ctx.data_mut(|d| *d.get_persisted_mut_or(key, false) = false);
++        }
++    }
++    pick
++}
++
+ /// Dropdown entry styled like `menu_item`, with a check on the selected one.
+ fn menu_choice(ui: &mut Ui, label: &str, selected: bool, p: &Pal) -> bool {
+     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+@@ -1305,8 +1589,8 @@ mod win {
          use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
          use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
          let menu = Menu::new();
@@ -857,7 +993,18 @@ index cbfba48..c484ddc 100644
          menu.append_items(&[&show, &PredefinedMenuItem::separator(), &exit]).ok()?;
          let (show_id, exit_id) = (show.id().clone(), exit.id().clone());
          let tray = TrayIconBuilder::new()
-@@ -1604,14 +1767,6 @@ mod win {
+@@ -1320,9 +1604,7 @@ mod win {
+             let ctx = ctx.clone();
+             move || {
+                 hidden.store(false, Ordering::SeqCst);
+-                ctx.send_viewport_cmd(V::Visible(true));
+-                ctx.send_viewport_cmd(V::Minimized(false));
+-                ctx.send_viewport_cmd(V::Focus);
++                crate::show_main_window(&ctx);
+                 ctx.request_repaint();
+             }
+         };
+@@ -1604,14 +1886,6 @@ mod win {
              .filter(|p| p.exists())
      }
  
@@ -872,7 +1019,7 @@ index cbfba48..c484ddc 100644
      pub fn set_autostart(on: bool) {
          let Ok((k, _)) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run") else {
              return;
-@@ -1701,14 +1856,31 @@ mod win {
+@@ -1701,14 +1975,31 @@ mod win {
          }
      }
  
@@ -908,7 +1055,7 @@ index cbfba48..c484ddc 100644
      pub fn tray(
          _ctx: eframe::egui::Context,
          _rgba: Vec<u8>,
-@@ -1722,6 +1894,46 @@ mod win {
+@@ -1722,6 +2013,43 @@ mod win {
      }
  }
  
@@ -923,11 +1070,8 @@ index cbfba48..c484ddc 100644
 +#[cfg(target_os = "linux")]
 +impl GaGaTray {
 +    fn show_window(&self) {
-+        use eframe::egui::ViewportCommand as V;
 +        self.hidden.store(false, std::sync::atomic::Ordering::SeqCst);
-+        self.ctx.send_viewport_cmd(V::Visible(true));
-+        self.ctx.send_viewport_cmd(V::Minimized(false));
-+        self.ctx.send_viewport_cmd(V::Focus);
++        crate::show_main_window(&self.ctx);
 +        self.ctx.request_repaint();
 +    }
 +}
@@ -955,7 +1099,7 @@ index cbfba48..c484ddc 100644
  fn apply_style(ctx: &egui::Context, accent: Color32) {
      for (theme, dark) in [(egui::Theme::Light, false), (egui::Theme::Dark, true)] {
          let p = Pal::new(dark, accent);
-@@ -1778,6 +1990,8 @@ fn setup_fonts(ctx: &egui::Context) {
+@@ -1778,6 +2106,8 @@ fn setup_fonts(ctx: &egui::Context) {
      let mut fonts = egui::FontDefinitions::default();
      let read = |c: &[&str]| c.iter().find_map(|p| std::fs::read(p).ok());
      let mut base = Vec::new();
@@ -964,7 +1108,7 @@ index cbfba48..c484ddc 100644
      if let Some(d) = read(&[
          "C:\\Windows\\Fonts\\msyh.ttc",
          "C:\\Windows\\Fonts\\msyh.ttf",
-@@ -1804,7 +2018,7 @@ fn setup_fonts(ctx: &egui::Context) {
+@@ -1804,7 +2134,7 @@ fn setup_fonts(ctx: &egui::Context) {
      icons.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
      fonts.families.insert(FontFamily::Name("icons".into()), icons);
      if !base.is_empty() {
@@ -973,7 +1117,15 @@ index cbfba48..c484ddc 100644
      }
      let mut bold_fam: Vec<String> = Vec::new();
      if let Some(d) = read(&["C:\\Windows\\Fonts\\msyhbd.ttc", "C:\\Windows\\Fonts\\msyhbd.ttf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]) {
-@@ -1893,27 +2107,33 @@ impl App {
+@@ -1888,32 +2218,41 @@ impl App {
+             tray: None,
+             quit: Arc::new(AtomicBool::new(false)),
+             hidden: Arc::new(AtomicBool::new(false)),
++            main_size: None,
++            main_pos: None,
++            main_maximized: None,
+         }
+     }
  
      fn install_extension(&mut self, ctx: &egui::Context, i: usize) {
          let b = self.browsers.get(i).cloned();
@@ -1016,7 +1168,7 @@ index cbfba48..c484ddc 100644
              }
          }
      }
-@@ -2008,7 +2228,7 @@ impl App {
+@@ -2008,7 +2347,7 @@ impl App {
          for url in text.split_whitespace().filter(|u| u.contains("://")) {
              let req = AddRequest { url: url.to_string(), source: Some("manual".into()), ..Default::default() };
              match self.engine.add(req, None) {
@@ -1025,7 +1177,7 @@ index cbfba48..c484ddc 100644
                  Ok(_) => added += 1,
                  Err(e) => self.toast(format!("{e}"), true),
              }
-@@ -2027,7 +2247,7 @@ impl App {
+@@ -2027,7 +2366,7 @@ impl App {
                  };
                  self.go(Page::Downloads);
                  self.mock_preview = Some(preview);
@@ -1034,7 +1186,7 @@ index cbfba48..c484ddc 100644
                  self.last_refresh = None;
                  return;
              }
-@@ -2108,8 +2328,8 @@ impl App {
+@@ -2108,8 +2447,8 @@ impl App {
                          preview.paused_duration = Duration::ZERO;
                      }
                  }
@@ -1045,7 +1197,7 @@ index cbfba48..c484ddc 100644
                  Act::ErrorInfo => {}
              }
              self.last_refresh = None;
-@@ -2126,7 +2346,7 @@ impl App {
+@@ -2126,7 +2465,7 @@ impl App {
              Act::Reveal => reveal(v.path.as_deref().unwrap_or(&v.dir)),
              Act::CopyLink => {
                  ctx.copy_text(v.url.clone());
@@ -1054,21 +1206,21 @@ index cbfba48..c484ddc 100644
              }
              Act::Remove => self.removing = Some(id),
              Act::ErrorInfo => self.err_report = Some(id),
-@@ -2161,7 +2381,12 @@ impl App {
+@@ -2161,7 +2500,12 @@ impl App {
          let maxr = close.translate(vec2(-bw, 0.0));
          let minr = maxr.translate(vec2(-bw, 0.0));
          if chrome_btn(ui, close, Glyph::Close, p) {
 -            ctx.send_viewport_cmd(ViewportCommand::Close);
 +            if self.tray.is_some() {
 +                self.hidden.store(true, Ordering::SeqCst);
-+                ctx.send_viewport_cmd(ViewportCommand::Visible(false));
++                hide_main_window(&ctx);
 +            } else {
 +                ctx.send_viewport_cmd(ViewportCommand::Close);
 +            }
          }
          if chrome_btn(ui, maxr, if maximized { Glyph::Restore } else { Glyph::Max }, p) {
              ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-@@ -2186,10 +2411,10 @@ impl App {
+@@ -2186,10 +2530,10 @@ impl App {
                      .frame(egui::Frame::NONE)
                      .font(font(12.5))
                      .vertical_align(egui::Align::Center)
@@ -1081,7 +1233,7 @@ index cbfba48..c484ddc 100644
              if enter || clicked {
                  self.add_input();
              }
-@@ -2199,7 +2424,7 @@ impl App {
+@@ -2199,7 +2543,7 @@ impl App {
      fn activity_bar(&mut self, ui: &mut Ui, p: &Pal) {
          let r = ui.max_rect();
          let active = self.views.iter().filter(|v| matches!(v.status, Status::Running | Status::Queued)).count();
@@ -1090,7 +1242,7 @@ index cbfba48..c484ddc 100644
          let selected = self.page;
          let mut indicator_y = None;
          for (i, (page, icon, tip)) in items.into_iter().enumerate() {
-@@ -2213,7 +2438,7 @@ impl App {
+@@ -2213,7 +2557,7 @@ impl App {
          if selected == Page::Settings {
              indicator_y = Some(sr.center().y);
          }
@@ -1099,7 +1251,7 @@ index cbfba48..c484ddc 100644
          if let Some(target_y) = indicator_y {
              let (center_y, height, moving) = self.nav_indicator.position(selected, target_y, Instant::now());
              if moving {
-@@ -2259,10 +2484,10 @@ impl App {
+@@ -2259,10 +2603,10 @@ impl App {
          };
          item(speed(self.engine.total_speed()));
          if busy {
@@ -1112,7 +1264,7 @@ index cbfba48..c484ddc 100644
          }
          let (done, total) = running.iter().filter_map(|v| v.size.map(|s| (v.downloaded, s))).fold((0u64, 0u64), |a, b| (a.0 + b.0, a.1 + b.1));
          if total > 0 {
-@@ -2292,9 +2517,9 @@ impl App {
+@@ -2292,9 +2636,9 @@ impl App {
          let key = Id::new(("hero", v.id));
          let net = spring(&ctx, key.with("spd"), v.speed as f32, 5.0, 0.0) as f64;
          let stats = [
@@ -1125,7 +1277,7 @@ index cbfba48..c484ddc 100644
          ];
          for (i, (k, val)) in stats.iter().enumerate() {
              let x = left.left() + i as f32 * 118.0;
-@@ -2303,7 +2528,7 @@ impl App {
+@@ -2303,7 +2647,7 @@ impl App {
          }
  
          let y = left.top() + 84.0;
@@ -1134,7 +1286,7 @@ index cbfba48..c484ddc 100644
          let f = seg_bar(&ctx, &pt, Rect::from_min_size(pos2(left.left(), y + 10.0), vec2(left.width(), 5.0)), v, p, key);
          let right = match v.size {
              Some(_) => format!("{}   {:.0}%", of(v), f * 100.0),
-@@ -2312,13 +2537,13 @@ impl App {
+@@ -2312,13 +2656,13 @@ impl App {
          pt.text(pos2(left.right(), y), Align2::RIGHT_CENTER, right, font(12.0), p.weak);
  
          let eta = match (v.status, v.eta_secs) {
@@ -1150,7 +1302,7 @@ index cbfba48..c484ddc 100644
          if icon_at(ui, br, Id::new("hero_btn"), icon, tip, p) {
              self.act(&ctx, v, a);
          }
-@@ -2395,14 +2620,14 @@ impl App {
+@@ -2395,14 +2739,14 @@ impl App {
          ui.painter().text(
              pos2(center.x, center.y - 48.0),
              Align2::CENTER_CENTER,
@@ -1167,7 +1319,7 @@ index cbfba48..c484ddc 100644
              font(14.0),
              p.weak,
          );
-@@ -2434,32 +2659,59 @@ impl App {
+@@ -2434,32 +2778,73 @@ impl App {
                  .frame(egui::Frame::NONE)
                  .font(font(14.0))
                  .vertical_align(egui::Align::Center)
@@ -1190,18 +1342,9 @@ index cbfba48..c484ddc 100644
          );
 +
 +        let lr = Rect::from_min_size(pos2(bounds.right() - 156.0, bounds.top() + 16.0), vec2(140.0, 30.0));
-+        let cur = self.draft.language;
-+        ui.scope_builder(egui::UiBuilder::new().max_rect(lr), |ui| {
-+            egui::ComboBox::from_id_salt("welcome_lang").width(lr.width()).selected_text(lang_pref_label(cur)).show_ui(ui, |ui| {
-+                ui.spacing_mut().item_spacing.y = 1.0;
-+                for (pref, label) in lang_options() {
-+                    if menu_choice(ui, label, cur == pref, p) {
-+                        self.set_language(pref);
-+                        ui.close();
-+                    }
-+                }
-+            });
-+        });
++        if let Some(pref) = fused_picker(ui, lr, Id::new("welcome_lang"), self.draft.language, &lang_options(), p) {
++            self.set_language(pref);
++        }
 +    }
 +
 +    /// 欢迎页语言切换：直接写设置并即时生效（不走设置页 600ms 防抖）。
@@ -1215,6 +1358,29 @@ index cbfba48..c484ddc 100644
 +        }
 +        self.draft.language = pref;
 +        lang::set_pref(pref);
++    }
++
++    /// Linux 显示后端在窗口创建时就确定了，改设置 = 存盘后拉起新进程再退出本进程。
++    /// 新进程用 `--restart-after <pid>` 等本进程退出（单实例锁随之释放）。
++    #[cfg(target_os = "linux")]
++    fn apply_backend_restart(&mut self) {
++        if self.draft.display_backend == self.engine.settings().display_backend {
++            return;
++        }
++        let mut cand = self.draft.clone();
++        cand.proxy.proxies = self.draft_proxies.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
++        if let Err(e) = self.engine.set_settings(cand) {
++            self.toast(format!("{e}"), true);
++            self.draft = self.engine.settings();
++            return;
++        }
++        if let Ok(exe) = std::env::current_exe() {
++            let _ = std::process::Command::new(exe)
++                .arg("--restart-after")
++                .arg(std::process::id().to_string())
++                .spawn();
++        }
++        std::process::exit(0);
      }
  
      fn section(&mut self, ui: &mut Ui, sec: Sec, items: &[TaskView], p: &Pal) {
@@ -1235,7 +1401,7 @@ index cbfba48..c484ddc 100644
          let (toggle, hit, btns) = header(ui, title, Some(items.len()), Some(open), actions, p);
          if toggle {
              ctx.data_mut(|d| d.insert_persisted(key, !open));
-@@ -2478,9 +2730,9 @@ impl App {
+@@ -2478,9 +2863,9 @@ impl App {
                  ui.set_width(190.0);
                  ui.spacing_mut().item_spacing.y = 1.0;
                  for (mode, label, danger) in [
@@ -1248,7 +1414,7 @@ index cbfba48..c484ddc 100644
                  ] {
                      if menu_item(ui, label, danger, p) {
                          pick = Some(mode);
-@@ -2518,8 +2770,8 @@ impl App {
+@@ -2518,8 +2903,8 @@ impl App {
          if items.is_empty() {
              let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
              let t = match sec {
@@ -1259,7 +1425,7 @@ index cbfba48..c484ddc 100644
              };
              ui.painter().text(pos2(r.left() + 52.0, r.center().y), Align2::LEFT_CENTER, t, font(12.5), p.weak);
              return;
-@@ -2535,7 +2787,7 @@ impl App {
+@@ -2535,7 +2920,7 @@ impl App {
          let ctx = ui.ctx().clone();
          let key = Id::new("section_handoff");
          let open = ctx.data_mut(|d| *d.get_persisted_mut_or(key, true));
@@ -1268,7 +1434,7 @@ index cbfba48..c484ddc 100644
          if toggle {
              ctx.data_mut(|d| d.insert_persisted(key, !open));
          }
-@@ -2557,10 +2809,10 @@ impl App {
+@@ -2557,10 +2942,10 @@ impl App {
              self.paint_file(&ctx, &pt, pos2(r.left() + 30.0, r.center().y), 26.0, &h.name, None, p, 0.7);
              let w = (r.width() - 52.0 - 56.0).max(80.0);
              text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &h.name, font(13.5), p.text, w);
@@ -1281,7 +1447,7 @@ index cbfba48..c484ddc 100644
                      drop = Some(i);
                  }
              }
-@@ -2573,16 +2825,16 @@ impl App {
+@@ -2573,16 +2958,16 @@ impl App {
  
      fn row_actions(v: &TaskView) -> Vec<(&'static str, &'static str, Act)> {
          let mut a = match v.status {
@@ -1305,7 +1471,7 @@ index cbfba48..c484ddc 100644
          a
      }
  
-@@ -2634,10 +2886,10 @@ impl App {
+@@ -2634,10 +3019,10 @@ impl App {
                      let t = since_on(&ctx, key.with("done"), !v.file_missing).unwrap_or(f32::INFINITY);
                      if t < 1.3 {
                          seg_bar(&ctx, &pt, Rect::from_min_size(pos2(rx - 160.0, r.top() + 29.0), vec2(160.0, 4.0)), v, p, key);
@@ -1318,7 +1484,7 @@ index cbfba48..c484ddc 100644
                      }
                  }
                  _ => {}
-@@ -2656,13 +2908,13 @@ impl App {
+@@ -2656,13 +3041,13 @@ impl App {
              ui.set_width(140.0);
              let mut items: Vec<(&str, &str, Act)> = Vec::new();
              if v.status == Status::Completed && !v.file_missing && !mock_item {
@@ -1336,7 +1502,7 @@ index cbfba48..c484ddc 100644
              ui.spacing_mut().item_spacing.y = 1.0;
              for (_, label, a) in items {
                  if menu_item(ui, label, matches!(a, Act::Remove), p) {
-@@ -2679,8 +2931,8 @@ impl App {
+@@ -2679,8 +3064,8 @@ impl App {
      fn detail(&mut self, ui: &mut Ui, v: &TaskView, p: &Pal) {
          let ctx = ui.ctx().clone();
          let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::hover());
@@ -1347,7 +1513,7 @@ index cbfba48..c484ddc 100644
              self.selected = None;
          }
          egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-@@ -2690,7 +2942,7 @@ impl App {
+@@ -2690,7 +3075,7 @@ impl App {
                  ui.add(egui::Label::new(RichText::new(m).size(12.0).color(c)).wrap());
                  if v.status == Status::Failed && v.error.is_some() {
                      ui.add_space(4.0);
@@ -1356,7 +1522,7 @@ index cbfba48..c484ddc 100644
                      if l.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                          self.err_report = Some(v.id);
                      }
-@@ -2710,53 +2962,53 @@ impl App {
+@@ -2710,53 +3095,53 @@ impl App {
                              ui.add(egui::Label::new(RichText::new(s).size(12.0).color(p.text)).truncate());
                          });
                      };
@@ -1424,7 +1590,7 @@ index cbfba48..c484ddc 100644
                              act = Some(Act::CopyLink);
                          }
                          ui.add(egui::Label::new(RichText::new(&v.url).size(12.0).color(p.text)).truncate()).tip(&v.url);
-@@ -2768,7 +3020,7 @@ impl App {
+@@ -2768,7 +3153,7 @@ impl App {
                  }
                  if !v.host.is_empty() {
                      ui.add_space(16.0);
@@ -1433,7 +1599,7 @@ index cbfba48..c484ddc 100644
                      ui.add_space(6.0);
                      self.server_row(ui, v, p);
                  }
-@@ -2783,18 +3035,19 @@ impl App {
+@@ -2783,18 +3168,19 @@ impl App {
  
      fn trash(&mut self, ui: &mut Ui, p: &Pal) {
          let ctx = ui.ctx().clone();
@@ -1458,7 +1624,7 @@ index cbfba48..c484ddc 100644
                  ] {
                      if menu_item(ui, label, danger, p) {
                          pick = Some(mode);
-@@ -2808,7 +3061,7 @@ impl App {
+@@ -2808,7 +3194,7 @@ impl App {
              }
          }
          if self.deleted.is_empty() {
@@ -1467,7 +1633,7 @@ index cbfba48..c484ddc 100644
              return;
          }
          let list = self.deleted.clone();
-@@ -2825,21 +3078,21 @@ impl App {
+@@ -2825,21 +3211,21 @@ impl App {
                  text_line(&pt, pos2(r.left() + 52.0, r.top() + 15.0), Align2::LEFT_CENTER, &d.rec.filename, font(13.5), p.text, w);
                  let size = d.rec.size.map(bytes).unwrap_or_default();
                  let mode = match d.mode {
@@ -1496,7 +1662,7 @@ index cbfba48..c484ddc 100644
                          self.engine.purge_deleted(Some(d.rec.id));
                          self.last_refresh = None;
                      }
-@@ -2850,13 +3103,13 @@ impl App {
+@@ -2850,13 +3236,13 @@ impl App {
      }
  
      fn extension_page(&mut self, ui: &mut Ui, p: &Pal) {
@@ -1512,7 +1678,7 @@ index cbfba48..c484ddc 100644
          let sel = self.ext_tab.min(browsers.len().saturating_sub(1));
          let on = browsers.get(sel).is_some_and(|b| self.ext_connected(b.key));
          let since = self.ext_guide.as_ref().filter(|g| g.browser == sel).map(|g| g.since);
-@@ -2876,15 +3129,15 @@ impl App {
+@@ -2876,15 +3262,15 @@ impl App {
                  ui.spacing_mut().item_spacing.y = 0.0;
                  let w = ui.available_width().min(680.0);
                  let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
@@ -1531,7 +1697,7 @@ index cbfba48..c484ddc 100644
                          act = Some(usize::MAX);
                      }
                      return;
-@@ -2924,36 +3177,53 @@ impl App {
+@@ -2924,36 +3310,53 @@ impl App {
                  icon_at(&pt, sel, pos2(r.left() + 36.0, r.center().y), 40.0, 1.0);
                  let tx = r.left() + 68.0;
                  text_line(&pt, pos2(tx, r.center().y - 10.0), Align2::LEFT_CENTER, b.name, bold(15.0), p.text, w - 200.0);
@@ -1599,7 +1765,7 @@ index cbfba48..c484ddc 100644
                  let ind = 30.0;
                  for (n, s) in steps.iter().enumerate() {
                      let (r, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
-@@ -2961,36 +3231,46 @@ impl App {
+@@ -2961,36 +3364,46 @@ impl App {
                      let c = pos2(r.left() + 10.0, r.center().y);
                      pt.circle_filled(c, 10.0, p.accent.gamma_multiply(0.14));
                      pt.text(c, Align2::CENTER_CENTER, (n + 1).to_string(), font(11.5), p.accent);
@@ -1664,7 +1830,7 @@ index cbfba48..c484ddc 100644
                  }
              });
          });
-@@ -3002,15 +3282,15 @@ impl App {
+@@ -3002,15 +3415,15 @@ impl App {
          }
          if copy {
              ctx.copy_text(path_s);
@@ -1683,7 +1849,7 @@ index cbfba48..c484ddc 100644
          }
          if open {
              let _ = unpack_extension(self.engine.data_dir());
-@@ -3019,7 +3299,7 @@ impl App {
+@@ -3019,7 +3432,7 @@ impl App {
      }
  
      fn cache_page(&mut self, ui: &mut Ui, p: &Pal) {
@@ -1692,7 +1858,7 @@ index cbfba48..c484ddc 100644
              self.cache = Some(self.engine.cache_report());
          }
          let Some(rep) = self.cache.clone() else { return };
-@@ -3033,26 +3313,26 @@ impl App {
+@@ -3033,26 +3446,26 @@ impl App {
                      });
                      ui.add_space(16.0);
                  };
@@ -1728,7 +1894,7 @@ index cbfba48..c484ddc 100644
                      self.engine.prune_missing();
                      self.cache = Some(self.engine.cache_report());
                      self.last_refresh = None;
-@@ -3068,9 +3348,9 @@ impl App {
+@@ -3068,9 +3481,9 @@ impl App {
                      pt.rect_filled(r, 0.0, p.hover);
                  }
                  let (k, c) = match it.kind {
@@ -1741,7 +1907,7 @@ index cbfba48..c484ddc 100644
                  };
                  pt.text(pos2(r.left() + 20.0, r.center().y), Align2::LEFT_CENTER, k, font(12.0), c);
                  pt.text(pos2(r.left() + 80.0, r.center().y), Align2::LEFT_CENTER, bytes(it.bytes), font(12.0), p.text);
-@@ -3081,7 +3361,7 @@ impl App {
+@@ -3081,7 +3494,7 @@ impl App {
  
      fn about(&mut self, ui: &mut Ui, p: &Pal) {
          ui.add_space(28.0);
@@ -1750,7 +1916,7 @@ index cbfba48..c484ddc 100644
          ui.add_space(8.0);
          let card = if p.dark { rgb(37, 37, 38) } else { rgb(250, 250, 250) };
          let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 150.0), Sense::hover());
-@@ -3101,25 +3381,30 @@ impl App {
+@@ -3101,25 +3514,30 @@ impl App {
          let y = r.top() + 126.0;
          let mut lx = x;
          let repo = "https://github.com/shuakami/gagadown";
@@ -1786,7 +1952,7 @@ index cbfba48..c484ddc 100644
      }
  
      fn settings_page(&mut self, ui: &mut Ui, p: &Pal) {
-@@ -3132,71 +3417,83 @@ impl App {
+@@ -3132,71 +3550,85 @@ impl App {
                  ui.vertical(|ui| {
                      ui.set_width(w);
                      ui.add_space(36.0);
@@ -1802,16 +1968,18 @@ index cbfba48..c484ddc 100644
                              ui.add_enabled_ui(d.launch_at_login, |ui| toggle(ui, &mut d.start_minimized, p));
                          });
 +                        srow(ui, p, first, tr("语言"), tr("界面语言；跟随系统按系统语言显示"), 52.0, |ui| {
-+                            egui::ComboBox::from_id_salt("lang").width(160.0).selected_text(lang_pref_label(d.language)).show_ui(ui, |ui| {
-+                                ui.spacing_mut().item_spacing.y = 1.0;
-+                                for (pref, label) in lang_options() {
-+                                    if menu_choice(ui, label, d.language == pref, p) {
-+                                        d.language = pref;
-+                                        lang::set_pref(pref);
-+                                        ui.close();
-+                                    }
-+                                }
-+                            });
++                            let (r, _) = ui.allocate_exact_size(vec2(160.0, 30.0), Sense::hover());
++                            if let Some(pref) = fused_picker(ui, r, Id::new("lang"), d.language, &lang_options(), p) {
++                                d.language = pref;
++                                lang::set_pref(pref);
++                            }
++                        });
++                        #[cfg(target_os = "linux")]
++                        srow(ui, p, first, tr("显示后端"), tr("Linux 使用的显示服务器，更改后自动重启生效"), 56.0, |ui| {
++                            let (r, _) = ui.allocate_exact_size(vec2(160.0, 30.0), Sense::hover());
++                            if let Some(b) = fused_picker(ui, r, Id::new("backend"), d.display_backend, &backend_options(), p) {
++                                d.display_backend = b;
++                            }
 +                        });
                      });
 -                    group(ui, p, "下载", |ui, first| {
@@ -1891,7 +2059,7 @@ index cbfba48..c484ddc 100644
                              egui::ComboBox::from_id_salt("pmode").width(230.0).selected_text(d.proxy.mode.label()).show_ui(ui, |ui| {
                                  ui.spacing_mut().item_spacing.y = 1.0;
                                  for m in ProxyMode::ALL {
-@@ -3207,17 +3504,17 @@ impl App {
+@@ -3207,17 +3639,17 @@ impl App {
                                  }
                              });
                          });
@@ -1915,7 +2083,7 @@ index cbfba48..c484ddc 100644
                              if self.engine.is_detecting() {
                                  ui.spinner();
                              }
-@@ -3226,25 +3523,25 @@ impl App {
+@@ -3226,25 +3658,25 @@ impl App {
                              ui.add(egui::TextEdit::singleline(&mut d.user_agent).desired_width(300.0));
                          });
                      });
@@ -1950,7 +2118,16 @@ index cbfba48..c484ddc 100644
                      });
                      self.about(ui, p);
                      ui.add_space(48.0);
-@@ -3295,7 +3592,7 @@ impl App {
+@@ -3271,6 +3703,8 @@ impl App {
+                 self.draft_proxies = self.draft.proxy.proxies.join("\n");
+             }
+         }
++        #[cfg(target_os = "linux")]
++        self.apply_backend_restart();
+         ctx.request_repaint_after(Duration::from_millis(200));
+     }
+ 
+@@ -3295,7 +3729,7 @@ impl App {
              ui.set_opacity(a);
              ui.set_width(520.0);
              ui.spacing_mut().item_spacing.y = 2.0;
@@ -1959,7 +2136,7 @@ index cbfba48..c484ddc 100644
              ui.add_space(2.0);
              ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.weak)).truncate());
              ui.add_space(12.0);
-@@ -3313,10 +3610,10 @@ impl App {
+@@ -3313,10 +3747,10 @@ impl App {
              let shut = Rect::from_min_size(pos2(copy.left() - 84.0, row.top()), vec2(76.0, 30.0));
              let cr = ui.interact(copy, Id::new("er-copy"), Sense::click());
              ui.painter().rect_filled(copy, CornerRadius::same(6), if cr.hovered() { blend(p.accent, Color32::BLACK, 0.88) } else { p.accent });
@@ -1972,7 +2149,7 @@ index cbfba48..c484ddc 100644
              if cr.clicked() && !closing {
                  ui.ctx().copy_text(report.clone());
              }
-@@ -3344,19 +3641,21 @@ impl App {
+@@ -3344,19 +3778,21 @@ impl App {
              ui.set_opacity(a);
              ui.set_width(340.0);
              ui.spacing_mut().item_spacing.y = 2.0;
@@ -2001,7 +2178,7 @@ index cbfba48..c484ddc 100644
              for &(mode, label) in options {
                  let (r, resp) = ui.allocate_exact_size(vec2(340.0, 34.0), Sense::click());
                  let on = mock_item || self.remove_mode == mode;
-@@ -3381,10 +3680,10 @@ impl App {
+@@ -3381,10 +3817,10 @@ impl App {
              let okr = ui.interact(ok, Id::new("rm-ok"), Sense::click());
              let base = if danger { p.red } else { p.accent };
              ui.painter().rect_filled(ok, CornerRadius::same(6), if okr.hovered() { blend(base, Color32::BLACK, 0.88) } else { base });
@@ -2014,7 +2191,7 @@ index cbfba48..c484ddc 100644
              if !closing && (okr.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter))) {
                  if self.page == Page::Downloads && self.views.len() == 1 && self.handoff_fails.is_empty() {
                      self.welcome_transition_pending = true;
-@@ -3530,6 +3829,7 @@ impl App {
+@@ -3530,6 +3966,7 @@ impl App {
                  .with_decorations(false)
                  .with_resizable(false)
                  .with_always_on_top()
@@ -2022,7 +2199,7 @@ index cbfba48..c484ddc 100644
                  .with_icon(self.icon.clone());
              let mut close = false;
              ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("popup", pop.key)), builder, |ui, _| {
-@@ -3575,7 +3875,7 @@ impl App {
+@@ -3575,7 +4012,7 @@ impl App {
              let pt = ui.painter().clone();
              self.paint_file(&ctx, &pt, pos2(b.left() + 18.0, b.top() + 18.0), 36.0, &pop.name, None, p, 1.0);
              text_line(&pt, pos2(b.left() + 48.0, b.top() + 9.0), Align2::LEFT_CENTER, &pop.name, bold(14.0), p.text, b.width() - 48.0);
@@ -2031,7 +2208,7 @@ index cbfba48..c484ddc 100644
              text_line(&pt, pos2(b.left() + 48.0, b.top() + 28.0), Align2::LEFT_CENTER, format!("{size}   {}", pop.host), font(12.0), p.weak, b.width() - 48.0);
              let by = b.top() + 56.0;
              let bar = Rect::from_min_size(pos2(b.left(), by), vec2(b.width(), 4.0));
-@@ -3584,15 +3884,15 @@ impl App {
+@@ -3584,15 +4021,15 @@ impl App {
                  let t = since_on(&ctx, Id::new(("pending_err", pop.key)), true).unwrap_or(1.0);
                  let k = ease_out_cubic((t / 0.5).min(1.0));
                  pt.rect_filled(bar, CornerRadius::same(2), blend(p.red, p.accent, k));
@@ -2052,7 +2229,18 @@ index cbfba48..c484ddc 100644
              };
              let r = Rect::from_min_size(pos2(b.right() - 76.0, b.bottom() - 28.0), vec2(76.0, 28.0));
              if btn_at(ui, r, Id::new(("pending_btn", pop.key)), label, false, p) {
-@@ -3642,7 +3942,7 @@ impl App {
+@@ -3606,9 +4043,7 @@ impl App {
+     fn show_in_main(&mut self, ctx: &egui::Context, id: Uuid) {
+         self.selected = Some(id);
+         self.hidden.store(false, Ordering::SeqCst);
+-        for c in [ViewportCommand::Visible(true), ViewportCommand::Minimized(false), ViewportCommand::Focus] {
+-            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, c);
+-        }
++        show_main_window(ctx);
+         ctx.request_repaint_of(egui::ViewportId::ROOT);
+     }
+ 
+@@ -3642,7 +4077,7 @@ impl App {
                  pt.add(Shape::line(vec![m(-3.4, 0.2), m(-1.1, 2.5), m(3.5, -2.3)], Stroke::new(1.6 * badge.min(1.0), Color32::WHITE)));
              }
              text_line(&pt, pos2(b.left() + 48.0, b.top() + 9.0), Align2::LEFT_CENTER, &v.filename, bold(14.0), p.text, b.width() - 48.0);
@@ -2061,7 +2249,7 @@ index cbfba48..c484ddc 100644
              text_line(&pt, pos2(b.left() + 48.0, b.top() + 28.0), Align2::LEFT_CENTER, format!("{size}   {}", v.host), font(12.0), p.weak, b.width() - 48.0);
  
              let by = b.top() + 56.0;
-@@ -3660,21 +3960,21 @@ impl App {
+@@ -3660,21 +4095,21 @@ impl App {
              if ok {
                  let a = since.map_or(1.0, |t| ease_out_cubic((t - 0.35) / 0.4));
                  let y = by + 22.0 + (1.0 - a) * 6.0;
@@ -2088,7 +2276,7 @@ index cbfba48..c484ddc 100644
                      },
                      _ => meta_line(v, p),
                  };
-@@ -3683,12 +3983,12 @@ impl App {
+@@ -3683,12 +4118,12 @@ impl App {
              }
  
              let buttons: Vec<(&str, bool, Option<Act>)> = match v.status {
@@ -2106,7 +2294,153 @@ index cbfba48..c484ddc 100644
              let sw = pt.layout_no_wrap(show.to_string(), font(12.5), p.text).size().x + 28.0;
              let sr = Rect::from_min_size(pos2(b.left(), b.bottom() - 28.0), vec2(sw, 28.0));
              if btn_at(ui, sr, Id::new(("popup_show", v.id)), show, false, p) {
-@@ -3942,16 +4242,16 @@ fn main() -> eframe::Result {
+@@ -3780,15 +4215,76 @@ impl eframe::App for App {
+                 apply_style(&ctx, a);
+             }
+         }
+-        if self.tray.is_some() && !self.quit.load(Ordering::SeqCst) && ctx.input(|i| i.viewport().close_requested()) {
+-            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+-            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+-            self.hidden.store(true, Ordering::SeqCst);
+-        }
+         self.refresh();
+         #[cfg(windows)]
+         win::DARK_TEXT.store(ui.visuals().dark_mode, std::sync::atomic::Ordering::Relaxed);
+         let p = Pal::new(ui.visuals().dark_mode, self.accent);
++        if self.engine.take_show_request() {
++            self.hidden.store(false, Ordering::SeqCst);
++            show_main_window(&ctx);
++        }
++        self.popups(&ctx, &p);
++        #[cfg(target_os = "linux")]
++        if IS_WAYLAND.load(Ordering::Relaxed) {
++            self.ui_wayland(ui);
++        } else {
++            self.ui_main(ui);
++        }
++        #[cfg(not(target_os = "linux"))]
++        self.ui_main(ui);
++        let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued)) || self.engine.is_detecting();
++        ctx.request_repaint_after(Duration::from_millis(if busy { 250 } else { 1000 }));
++    }
++
++    fn on_exit(&mut self) {
++        let e = self.engine.clone();
++        self.rt.block_on(async move {
++            let _ = tokio::time::timeout(Duration::from_secs(3), e.shutdown()).await;
++        });
++    }
++}
++
++impl App {
++    /// Root pass on Wayland: the root window is never mapped (it only hosts the
++    /// event loop), so the main window lives in an immediate child viewport.
++    /// That viewport can be destroyed for a real hide-to-tray and recreated on
++    /// demand - the only way to fully unmap a window under Wayland.
++    #[cfg(target_os = "linux")]
++    fn ui_wayland(&mut self, ui: &mut Ui) {
++        if self.hidden.load(Ordering::SeqCst) {
++            return;
++        }
++        let mut builder = egui::ViewportBuilder::default()
++            .with_title("GaGaDown")
++            .with_app_id("io.github.shuakami.GaGaDown")
++            .with_inner_size(self.main_size.unwrap_or([1120.0, 720.0]))
++            .with_min_inner_size([760.0, 480.0])
++            .with_decorations(false)
++            .with_icon(self.icon.clone());
++        if let Some(pos) = self.main_pos {
++            builder = builder.with_position(pos);
++        }
++        if self.main_maximized == Some(true) {
++            builder = builder.with_maximized(true);
++        }
++        ui.ctx().show_viewport_immediate(main_viewport(), builder, |ui2, _| self.ui_main(ui2));
++    }
++
++    /// The main window's contents. On X11/Windows this is the root viewport's
++    /// pass; on Wayland it runs inside the child viewport from `ui_wayland`.
++    fn ui_main(&mut self, ui: &mut Ui) {
++        let ctx = ui.ctx().clone();
++        let p = Pal::new(ui.visuals().dark_mode, self.accent);
++        if self.tray.is_some() && !self.quit.load(Ordering::SeqCst) && ctx.input(|i| i.viewport().close_requested()) {
++            // On Wayland the close is let through: the child viewport being
++            // destroyed is what fully unmaps the window, and `hidden` keeps it
++            // from being recreated.
++            if !IS_WAYLAND.load(Ordering::Relaxed) {
++                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
++                hide_main_window(&ctx);
++            }
++            self.hidden.store(true, Ordering::SeqCst);
++        }
+         let full = ui.max_rect();
+ 
+         if !ctx.egui_wants_keyboard_input() {
+@@ -3856,23 +4352,25 @@ impl eframe::App for App {
+         self.remove_modal(&ctx, &p);
+         self.error_modal(&ctx, &p);
+         self.show_toasts(&ctx, &p);
+-        if self.engine.take_show_request() {
+-            self.hidden.store(false, Ordering::SeqCst);
+-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+-        }
+-        self.popups(&ctx, &p);
+         resize_edges(&ctx, full);
+-        let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued)) || self.engine.is_detecting();
+-        ctx.request_repaint_after(Duration::from_millis(if busy { 250 } else { 1000 }));
++        #[cfg(target_os = "linux")]
++        self.track_main_geometry(&ctx);
+     }
+ 
+-    fn on_exit(&mut self) {
+-        let e = self.engine.clone();
+-        self.rt.block_on(async move {
+-            let _ = tokio::time::timeout(Duration::from_secs(3), e.shutdown()).await;
++    /// Remember the main window's geometry so the next recreation on Wayland
++    /// (where tray-hide destroys the viewport) can restore it.
++    #[cfg(target_os = "linux")]
++    fn track_main_geometry(&mut self, ctx: &egui::Context) {
++        if !IS_WAYLAND.load(Ordering::Relaxed) {
++            return;
++        }
++        let (inner, outer, maximized) = ctx.input(|i| {
++            let v = i.viewport();
++            (v.inner_rect, v.outer_rect, v.maximized)
+         });
++        self.main_size = inner.map(|r| [r.width(), r.height()]);
++        self.main_pos = outer.map(|r| r.min);
++        self.main_maximized = maximized;
+     }
+ }
+ 
+@@ -3909,6 +4407,24 @@ fn main() -> eframe::Result {
+     // UI-thread calls into the engine may spawn tokio tasks.
+     let rt_handle = rt.handle().clone();
+     let _rt_guard = rt_handle.enter();
++    // `--restart-after <pid>`: the settings page spawns a replacement process
++    // after a backend change; wait for the old process to exit so the
++    // single-instance lock and display connection are released first.
++    #[cfg(target_os = "linux")]
++    {
++        let mut args = std::env::args();
++        while let Some(a) = args.next() {
++            if a == "--restart-after" {
++                if let Some(pid) = args.next().and_then(|v| v.parse::<u32>().ok()) {
++                    let proc = format!("/proc/{pid}");
++                    let deadline = Instant::now() + Duration::from_secs(10);
++                    while std::path::Path::new(&proc).exists() && Instant::now() < deadline {
++                        std::thread::sleep(Duration::from_millis(50));
++                    }
++                }
++            }
++        }
++    }
+     let engine = {
+         let _g = rt.enter();
+         Engine::new(None)
+@@ -3942,16 +4458,16 @@ fn main() -> eframe::Result {
          let ae = api_error.clone();
          rt.spawn(async move {
              if let Err(x) = gagadown_core::api::serve(e, port).await {
@@ -2126,24 +2460,56 @@ index cbfba48..c484ddc 100644
              .with_inner_size([1120.0, 720.0])
              .with_min_inner_size([760.0, 480.0])
              .with_decorations(false)
-@@ -3959,6 +4259,17 @@ fn main() -> eframe::Result {
+@@ -3959,6 +4475,41 @@ fn main() -> eframe::Result {
          centered: true,
          ..Default::default()
      };
-+    // Wayland can't unmap a window, so close-to-tray (Visible(false)) only works
-+    // under X11/XWayland. Default to it for tray support (DISPLAY is always set
-+    // when XWayland is available); GAGADOWN_FORCE_WAYLAND opts back into the
-+    // Wayland backend for debugging.
++    // On Linux the display backend comes from the user's setting (`Auto` follows
++    // the session type); GAGADOWN_FORCE_X11 / GAGADOWN_FORCE_WAYLAND override it
++    // for debugging. On Wayland a mapped window cannot be unmapped, so the root
++    // window stays hidden (KEEP_ROOT_HIDDEN) and the main window is a child
++    // viewport that hide-to-tray destroys and recreates.
 +    #[cfg(target_os = "linux")]
-+    if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_none() && std::env::var_os("DISPLAY").is_some() {
-+        use winit::platform::x11::EventLoopBuilderExtX11;
-+        opts.event_loop_builder = Some(Box::new(|builder| {
-+            builder.with_x11();
-+        }));
++    {
++        use gagadown_core::config::DisplayBackend as Backend;
++        let backend = if std::env::var_os("GAGADOWN_FORCE_X11").is_some() {
++            Backend::X11
++        } else if std::env::var_os("GAGADOWN_FORCE_WAYLAND").is_some() {
++            Backend::Wayland
++        } else {
++            st.display_backend
++        };
++        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
++            && matches!(backend, Backend::Wayland | Backend::Auto);
++        IS_WAYLAND.store(wayland, Ordering::Relaxed);
++        eframe::KEEP_ROOT_HIDDEN.store(wayland, Ordering::Relaxed);
++        match backend {
++            Backend::Wayland if wayland => {
++                use winit::platform::wayland::EventLoopBuilderExtWayland;
++                opts.event_loop_builder = Some(Box::new(|builder| {
++                    builder.with_wayland();
++                }));
++            }
++            Backend::X11 => {
++                use winit::platform::x11::EventLoopBuilderExtX11;
++                opts.event_loop_builder = Some(Box::new(|builder| {
++                    builder.with_x11();
++                }));
++            }
++            _ => {}
++        }
 +    }
      #[cfg(windows)]
      eframe::epaint::text::set_glyph_rasterizer(win::gdi_glyph);
      eframe::run_native(
+@@ -3969,6 +4520,7 @@ fn main() -> eframe::Result {
+             apply_style(&cc.egui_ctx, accent);
+             let mut app = App::new(rt, engine.clone(), api_error, icon, accent);
+             app.tray = win::tray(cc.egui_ctx.clone(), tray_rgba(), app.quit.clone(), app.hidden.clone());
++            // On Wayland a silent start simply never creates the main viewport.
+             app.hidden.store(silent, Ordering::SeqCst);
+             let _ = unpack_extension(engine.data_dir());
+             // Keep the UI pass running while minimized or in the tray so hand-off popups still open.
 diff --git a/crates/gagadown-app/src/strings.rs b/crates/gagadown-app/src/strings.rs
 new file mode 100644
 index 0000000..133ce71
@@ -2604,7 +2970,7 @@ index 8b287de..d68e665 100644
 +    }
  }
 diff --git a/crates/gagadown-core/src/config.rs b/crates/gagadown-core/src/config.rs
-index 1ffd307..0e9bade 100644
+index 1ffd307..e7cce7e 100644
 --- a/crates/gagadown-core/src/config.rs
 +++ b/crates/gagadown-core/src/config.rs
 @@ -1,3 +1,4 @@
@@ -2627,20 +2993,37 @@ index 1ffd307..0e9bade 100644
          }
      }
  }
-@@ -88,6 +89,8 @@ pub struct Settings {
+@@ -88,6 +89,24 @@ pub struct Settings {
      pub launch_at_login: bool,
      /// When launched at login, stay in the tray instead of opening the main window.
      pub start_minimized: bool,
 +    /// UI language; `Auto` follows the system locale.
 +    pub language: crate::lang::LangPref,
++    /// Linux display backend; `Auto` follows the session type.
++    pub display_backend: DisplayBackend,
++}
++
++/// Which display backend winit connects to on Linux.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "lowercase")]
++pub enum DisplayBackend {
++    /// Wayland on Wayland sessions, X11 elsewhere. Not offered in the UI;
++    /// still honored if present in a hand-edited settings.json.
++    Auto,
++    Wayland,
++    /// X11/XWayland — the default; renders sharply under fractional scaling
++    /// and keeps the familiar withdraw-to-tray window behavior.
++    #[default]
++    X11,
  }
  
  pub const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
-@@ -117,6 +120,7 @@ impl Default for Settings {
+@@ -117,6 +136,8 @@ impl Default for Settings {
              cache_dir: None,
              launch_at_login: false,
              start_minimized: false,
 +            language: crate::lang::LangPref::Auto,
++            display_backend: DisplayBackend::X11,
          }
      }
  }
@@ -3074,10 +3457,10 @@ index 860fdcc..8ec7cf2 100644
  }
 diff --git a/crates/gagadown-core/src/lang.rs b/crates/gagadown-core/src/lang.rs
 new file mode 100644
-index 0000000..7a7fe8d
+index 0000000..ecbc6ce
 --- /dev/null
 +++ b/crates/gagadown-core/src/lang.rs
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,181 @@
 +//! Minimal bilingual UI strings: Simplified Chinese plus English.
 +//!
 +//! Call sites keep the Chinese literal as the lookup key — `tr("下载")` —
@@ -3199,6 +3582,9 @@ index 0000000..7a7fe8d
 +        "本机代理 {0}" => "Local proxy {0}",
 +        "环境变量代理 {0}" => "Env proxy {0}",
 +        "系统代理" => "System proxy",
++        "跟随系统" => "Follow system",
++        "显示后端" => "Display backend",
++        "Linux 使用的显示服务器，更改后自动重启生效" => "Display server used on Linux; the app restarts automatically to apply",
 +        "没有可用线路（仅代理模式但未配置或探测到代理）" => "No route available (proxy-only mode with no proxy configured or detected)",
 +        "没有可用线路" => "No route available",
 +        // api.rs — browser hand-off messages
@@ -3605,10 +3991,22 @@ index 1fdf802..d8f93ea 100644
 +}
 +initialize();
 diff --git a/patches/eframe/src/lib.rs b/patches/eframe/src/lib.rs
-index da1d800..b8769d4 100644
+index da1d800..6565d97 100644
 --- a/patches/eframe/src/lib.rs
 +++ b/patches/eframe/src/lib.rs
-@@ -186,6 +186,7 @@ pub mod stall {
+@@ -170,6 +170,11 @@ pub static KEEP_ROOT_UI: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
+ /// When set before `run_native`, the root window stays hidden after its first paint (start in tray).
+ pub static START_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+ 
++/// When set, the root window is never painted or shown at all: the app renders its UI
++/// into child viewports instead. Needed on Wayland, where a mapped window cannot be
++/// unmapped, so hide-to-tray has to destroy and recreate a destroyable window.
++pub static KEEP_ROOT_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++
+ /// Breadcrumbs for diagnosing UI-thread stalls: which stage the event loop is currently in.
+ pub mod stall {
+     #![allow(missing_docs)]
+@@ -186,6 +191,7 @@ pub mod stall {
      pub const ROOT_PAINT: u32 = 5;
      pub const CHILD_CREATE: u32 = 6;
      pub const CHILD_PAINT: u32 = 7;
@@ -3616,7 +4014,7 @@ index da1d800..b8769d4 100644
  
      pub fn now_ms() -> u64 {
          std::time::SystemTime::now()
-@@ -203,6 +204,7 @@ pub mod stall {
+@@ -203,6 +209,7 @@ pub mod stall {
              ROOT_PAINT => "主窗口绘制/呈现",
              CHILD_CREATE => "创建弹窗窗口",
              CHILD_PAINT => "弹窗绘制/呈现",
@@ -3789,7 +4187,7 @@ index 0759bf3..8e79ee5 100644
      }
  }
 diff --git a/patches/eframe/src/native/wgpu_integration.rs b/patches/eframe/src/native/wgpu_integration.rs
-index 61629a3..97b4918 100644
+index 61629a3..c98b1e5 100644
 --- a/patches/eframe/src/native/wgpu_integration.rs
 +++ b/patches/eframe/src/native/wgpu_integration.rs
 @@ -282,7 +282,7 @@ impl<'app> WgpuWinitApp<'app> {
@@ -3812,7 +4210,7 @@ index 61629a3..97b4918 100644
                          return Ok(EventResult::RepaintNext(window.id()));
                      }
                      return Ok(EventResult::Wait);
-@@ -671,6 +675,7 @@ impl WgpuWinitRunning<'_> {
+@@ -671,17 +675,24 @@ impl WgpuWinitRunning<'_> {
                  return Ok(EventResult::Wait);
              };
              egui_winit::update_viewport_info(info, &integration.egui_ctx, window, false);
@@ -3820,7 +4218,15 @@ index 61629a3..97b4918 100644
  
              // winit never reports `Occluded` on Windows, so a window hidden with `Visible(false)`
              // looked visible here. Presenting to a hidden window stalls in `get_current_texture`
-@@ -681,7 +686,10 @@ impl WgpuWinitRunning<'_> {
+             // (DXGI frame-latency wait / Vulkan acquire), freezing the whole event loop.
+             // The root starts hidden and is only shown after its first paint, so that one must run.
+-            let is_visible = integration.is_first_frame()
+-                || (viewport.info.visible().unwrap_or(true) && !is_invisible_or_minimized(window));
++            // KEEP_ROOT_HIDDEN: root never paints, so its surface never maps (Wayland).
++            let is_visible = (integration.is_first_frame()
++                || (viewport.info.visible().unwrap_or(true) && !is_invisible_or_minimized(window)))
++                && !(viewport_id == ViewportId::ROOT
++                    && crate::KEEP_ROOT_HIDDEN.load(std::sync::atomic::Ordering::Relaxed));
  
              {
                  profiling::scope!("set_window");
@@ -3831,7 +4237,7 @@ index 61629a3..97b4918 100644
              }
  
              let Some(egui_winit) = egui_winit.as_mut() else {
-@@ -693,6 +701,9 @@ impl WgpuWinitRunning<'_> {
+@@ -693,6 +704,9 @@ impl WgpuWinitRunning<'_> {
                  || is_viewport_or_descendant_visible(viewports, viewport_id)
                  || (viewport_id == ViewportId::ROOT
                      && crate::KEEP_ROOT_UI.load(std::sync::atomic::Ordering::Relaxed));
@@ -3841,7 +4247,7 @@ index 61629a3..97b4918 100644
  
              integration.pre_update();
  
-@@ -769,7 +780,11 @@ impl WgpuWinitRunning<'_> {
+@@ -769,7 +783,11 @@ impl WgpuWinitRunning<'_> {
          // so make sure we hold no locks here!
          let full_output = {
              let _stage = crate::stall::Stage::enter(crate::stall::UPDATE);
@@ -3854,7 +4260,7 @@ index 61629a3..97b4918 100644
          };
  
          // ------------------------------------------------------------
-@@ -826,6 +841,7 @@ impl WgpuWinitRunning<'_> {
+@@ -826,6 +844,7 @@ impl WgpuWinitRunning<'_> {
                  }
              });
              let _stage = crate::stall::Stage::enter(crate::stall::ROOT_PAINT);
@@ -3862,7 +4268,7 @@ index 61629a3..97b4918 100644
              let vsync_secs = painter.paint_and_update_textures(
                  viewport_id,
                  pixels_per_point,
-@@ -835,6 +851,7 @@ impl WgpuWinitRunning<'_> {
+@@ -835,6 +854,7 @@ impl WgpuWinitRunning<'_> {
                  screenshot_commands,
                  window,
              );
@@ -3870,7 +4276,20 @@ index 61629a3..97b4918 100644
  
              for action in viewport.actions_requested.drain(..) {
                  match action {
-@@ -1167,6 +1184,7 @@ fn render_immediate_viewport(
+@@ -865,6 +885,12 @@ impl WgpuWinitRunning<'_> {
+ 
+             vsync_secs
+         } else {
++            // The accumulated deltas are still needed: immediate child viewports
++            // paint with only their own delta, so textures referenced there must
++            // already be uploaded. Apply them without presenting.
++            if !pending_deltas.set.is_empty() || !pending_deltas.free.is_empty() {
++                painter.update_textures(pending_deltas);
++            }
+             0.0
+         };
+ 
+@@ -1167,6 +1193,7 @@ fn render_immediate_viewport(
      immediate_viewport: ImmediateViewport<'_>,
  ) {
      profiling::function_scope!();
@@ -3878,7 +4297,7 @@ index 61629a3..97b4918 100644
  
      let ImmediateViewport {
          ids,
-@@ -1193,6 +1211,8 @@ fn render_immediate_viewport(
+@@ -1193,6 +1220,8 @@ fn render_immediate_viewport(
              painter,
          );
          if viewport.window.is_none() {
@@ -3887,7 +4306,7 @@ index 61629a3..97b4918 100644
              event_loop_context::with_current_event_loop(|event_loop| {
                  let _stage = crate::stall::Stage::enter(crate::stall::CHILD_CREATE);
                  // Create hidden and show after the first paint, like the root, so no blank
-@@ -1203,12 +1223,14 @@ fn render_immediate_viewport(
+@@ -1203,12 +1232,14 @@ fn render_immediate_viewport(
                  viewport.builder.visible = wanted;
                  reveal = wanted != Some(false) && viewport.window.is_some();
              });
@@ -3902,7 +4321,7 @@ index 61629a3..97b4918 100644
  
          let mut input = egui_winit.take_egui_input(window);
          input.viewports = viewports
-@@ -1236,6 +1258,7 @@ fn render_immediate_viewport(
+@@ -1236,6 +1267,7 @@ fn render_immediate_viewport(
  
      // Run the user code, which could re-entrantly call this function again (!).
      // Make sure no locks are held during this call.
@@ -3910,7 +4329,7 @@ index 61629a3..97b4918 100644
      let egui::FullOutput {
          platform_output,
          textures_delta,
-@@ -1245,6 +1268,7 @@ fn render_immediate_viewport(
+@@ -1245,6 +1277,7 @@ fn render_immediate_viewport(
      } = egui_ctx.run_ui(input, |ui| {
          viewport_ui_cb(ui);
      });
@@ -3918,7 +4337,7 @@ index 61629a3..97b4918 100644
  
      // ------------------------------------------
  
-@@ -1269,18 +1293,22 @@ fn render_immediate_viewport(
+@@ -1269,18 +1302,22 @@ fn render_immediate_viewport(
  
      {
          profiling::scope!("set_window");
@@ -3942,7 +4361,7 @@ index 61629a3..97b4918 100644
      let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);
      painter.paint_and_update_textures(
          ids.this,
-@@ -1291,11 +1319,13 @@ fn render_immediate_viewport(
+@@ -1291,11 +1328,13 @@ fn render_immediate_viewport(
          vec![],
          window,
      );
@@ -3957,7 +4376,7 @@ index 61629a3..97b4918 100644
      egui_winit.handle_platform_output(window, platform_output);
  
 diff --git a/patches/egui-wgpu/src/winit.rs b/patches/egui-wgpu/src/winit.rs
-index f9db6b5..dbd2e18 100644
+index f9db6b5..2caaa02 100644
 --- a/patches/egui-wgpu/src/winit.rs
 +++ b/patches/egui-wgpu/src/winit.rs
 @@ -20,6 +20,8 @@ struct SurfaceState {
@@ -4098,7 +4517,7 @@ index f9db6b5..dbd2e18 100644
          };
  
          // Ensure that the queue guard does not do unnecessary work when dropped
-@@ -770,11 +834,16 @@ impl Painter {
+@@ -770,14 +834,41 @@ impl Painter {
          {
              profiling::scope!("present");
              // wgpu doesn't document where vsync can happen. Maybe here?
@@ -4116,3 +4535,28 @@ index f9db6b5..dbd2e18 100644
          vsync_sec
      }
  
++    /// Apply pending texture updates without painting. Needed when a viewport's
++    /// paint is skipped (e.g. a permanently unmapped root): its accumulated
++    /// `textures_delta` would otherwise go stale, and a later-painting child
++    /// viewport could hit "texture not allocated" for ids whose upload still
++    /// sits in the parent's pending deltas.
++    pub fn update_textures(&mut self, textures_delta: &mut epaint::textures::TexturesDelta) {
++        let Some(render_state) = self.render_state.as_mut() else {
++            return;
++        };
++        let mut renderer = render_state.renderer.write();
++        #[expect(clippy::iter_over_hash_type)] // Order doesn't matter here
++        for (id, image_deltas) in textures_delta.set.drain() {
++            for image_delta in image_deltas {
++                renderer.update_texture(&render_state.device, &render_state.queue, id, &image_delta);
++            }
++        }
++        #[expect(clippy::iter_over_hash_type)] // Order doesn't matter here
++        for id in textures_delta.free.drain() {
++            renderer.free_texture(&id);
++        }
++    }
++
+     /// Call this at the beginning of each frame to receive the requested screenshots.
+     pub fn handle_screenshots(&self, events: &mut Vec<Event>) {
+         for (viewport_id, user_data, screenshot) in self.capture_rx.try_iter() {
