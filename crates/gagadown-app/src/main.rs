@@ -3571,8 +3571,14 @@ impl App {
             }
             lx = lr.right() + 18.0;
         }
+        // 右侧统计先画，拿到左边界给更新标签做宽度上限——长译文（如英文
+        // Installed 状态）不再与统计文本重叠，超出部分截断为省略号。
+        let done = self.views.iter().filter(|v| v.status == Status::Completed);
+        let (n, total) = done.fold((0usize, 0u64), |(n, t), v| (n + 1, t + v.size.unwrap_or(0)));
+        let stats_r = pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, trf("已完成 {} 个下载，共 {}", &[&n, &bytes(total)]), font(12.0), p.weak);
+        let umax = (stats_r.left() - lx - 12.0).max(8.0);
         // 更新入口：单个标签即状态机——文案/颜色/可交互性随 stage 变化，
-        // 文案切换时 160ms 交叉淡入淡出，不再向后堆叠状态文本。
+        // 文案切换时 90ms 提亮落位，不再向后堆叠状态文本。
         let stage = self.update.lock().clone();
         let (ukey, ulabel, ucol, live, utip): (u8, String, Color32, bool, Option<String>) = match &stage {
             update::Stage::Idle => (0, tr("检查更新").into(), p.accent, true, None),
@@ -3598,11 +3604,13 @@ impl App {
             ui.ctx().request_repaint();
         }
         let ualpha = if ft >= 1.0 { 1.0 } else { 1.0 - 0.35 * (1.0 - ft) * (1.0 - ft) };
-        let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, &ulabel, font(12.5), ucol.linear_multiply(ualpha), w);
+        let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, &ulabel, font(12.5), ucol.linear_multiply(ualpha), umax);
         if live {
             let mut resp = ui.interact(lr.expand(3.0), Id::new("about_update"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
             if let Some(t) = &utip {
                 resp = resp.on_hover_text(t);
+            } else if lr.width() >= umax - 1.0 {
+                resp = resp.on_hover_text(&ulabel);
             }
             if resp.hovered() {
                 pt.hline(lr.x_range(), lr.bottom() + 1.0, Stroke::new(1.0, p.accent.gamma_multiply(0.6)));
@@ -3611,10 +3619,6 @@ impl App {
                 self.start_update();
             }
         }
-
-        let done = self.views.iter().filter(|v| v.status == Status::Completed);
-        let (n, total) = done.fold((0usize, 0u64), |(n, t), v| (n + 1, t + v.size.unwrap_or(0)));
-        pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, trf("已完成 {} 个下载，共 {}", &[&n, &bytes(total)]), font(12.0), p.weak);
     }
 
     fn settings_page(&mut self, ui: &mut Ui, p: &Pal) {

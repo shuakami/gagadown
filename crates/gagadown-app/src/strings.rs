@@ -265,6 +265,16 @@ fn en(zh: &'static str) -> &'static str {
         "{}   {} 连接" => "{0}   {1} connections",
         "在主界面中显示" => "Show in Main Window",
         "浏览器插件端口 {} 不可用：{}" => "Browser extension port {0} unavailable: {1}",
+        "显示后端" => "Display backend",
+        "Linux 使用的显示服务器，更改后自动重启生效" => "Display server used on Linux; the app restarts automatically to apply",
+        "检查更新" => "Check for updates",
+        "正在检查…" => "Checking…",
+        "已是最新" => "Up to date",
+        "发现新版本 {}" => "New version {0} found",
+        "正在下载… {}%" => "Downloading… {0}%",
+        "正在安装…" => "Installing…",
+        "已安装，点击重启完成更新" => "Installed — click to restart and finish",
+        "更新失败" => "Update failed",
         _ => zh,
     }
 }
