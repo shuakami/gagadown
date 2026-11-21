@@ -12,6 +12,7 @@ pub const REPO: &str = "shuakami/gagadown";
 pub const APP_ID: &str = "io.github.shuakami.GaGaDown";
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // UI 入口待重新设计；Downloading/Failed 载荷暂无人读取
 pub enum Stage {
     Idle,
     Checking,

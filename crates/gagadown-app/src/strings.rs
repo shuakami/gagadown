@@ -274,6 +274,7 @@ fn en(zh: &'static str) -> &'static str {
         "正在下载… {}%" => "Downloading… {0}%",
         "正在安装…" => "Installing…",
         "已安装，点击重启完成更新" => "Installed — click to restart and finish",
+        "重启完成更新" => "Restart to update",
         "更新失败" => "Update failed",
         _ => zh,
     }

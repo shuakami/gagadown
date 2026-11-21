@@ -428,11 +428,6 @@ struct App {
     main_pos: Option<Pos2>,
     main_maximized: Option<bool>,
     update: update::State,
-    /// 关于卡片更新标签的交叉淡入淡出：当前文案、上一条文案、切换时刻、阶段 key。
-    update_label: String,
-    update_label_prev: String,
-    update_label_at: Instant,
-    update_label_key: u8,
 }
 
 /// A download popup: `task` is set once the hand-off probe accepted the link.
@@ -2181,7 +2176,7 @@ impl App {
     fn new(rt: tokio::runtime::Runtime, engine: Engine, api_error: Arc<Mutex<Option<String>>>, icon: Arc<egui::IconData>, accent: Color32) -> Self {
         let draft = engine.settings();
         let draft_proxies = draft.proxy.proxies.join("\n");
-        Self {
+        let app = Self {
             rt,
             engine,
             page: Page::Downloads,
@@ -2207,10 +2202,6 @@ impl App {
             draft,
             draft_proxies,
             update: update::new_state(),
-            update_label: String::new(),
-            update_label_prev: String::new(),
-            update_label_at: Instant::now(),
-            update_label_key: u8::MAX,
             cache: None,
             toasts: Vec::new(),
             handoff_fails: Vec::new(),
@@ -2232,7 +2223,11 @@ impl App {
             main_size: None,
             main_pos: None,
             main_maximized: None,
-        }
+        };
+        // 启动时静默检查一次更新：发现新版才在标题栏出现提示，无更新不打扰。
+        let st = app.update.clone();
+        app.rt.spawn(async move { update::check(&st).await });
+        app
     }
 
     fn install_extension(&mut self, ctx: &egui::Context, i: usize) {
@@ -2525,8 +2520,48 @@ impl App {
             ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
         }
 
+        // 更新提示药丸：金刚键左侧。无更新时完全不渲染；发现新版与待重启
+        // 用 accent 实心药丸（可点），检查中/下载/安装为弱色文本态，
+        // 失败为红色可点重试。
+        let stage = self.update.lock().clone();
+        let ulabel: Option<String> = match &stage {
+            update::Stage::Idle | update::Stage::UpToDate => None,
+            update::Stage::Checking => Some(tr("正在检查…").into()),
+            update::Stage::Found(tag, _) => Some(trf("发现新版本 {}", &[tag])),
+            update::Stage::Downloading(pct) => Some(trf("正在下载… {}%", &[pct])),
+            update::Stage::Installing => Some(tr("正在安装…").into()),
+            update::Stage::Installed => Some(tr("重启完成更新").into()),
+            update::Stage::Failed(_) => Some(tr("更新失败").into()),
+        };
+        let mut pill_right = minr.left() - 8.0;
+        if let Some(ulabel) = ulabel {
+            let f = font(11.5);
+            let actionable = matches!(stage, update::Stage::Found(..) | update::Stage::Installed | update::Stage::Failed(_));
+            let tw = ui.painter().layout_no_wrap(ulabel.clone(), f.clone(), p.text).size().x;
+            let pill = Rect::from_min_size(pos2(pill_right - tw - 20.0, r.center().y - 10.0), vec2(tw + 20.0, 20.0));
+            let mut resp = ui.interact(pill, Id::new("update_pill"), Sense::click());
+            let (bg, fg) = if matches!(stage, update::Stage::Found(..) | update::Stage::Installed) {
+                (p.accent, Color32::WHITE)
+            } else if matches!(stage, update::Stage::Failed(_)) {
+                (p.input, p.red)
+            } else {
+                (p.input, p.weak)
+            };
+            let bg = if resp.hovered() && actionable { bg.gamma_multiply(1.2) } else { bg };
+            ui.painter().rect(pill, CornerRadius::same(10), bg, Stroke::NONE, StrokeKind::Inside);
+            ui.painter().text(pill.center(), Align2::CENTER_CENTER, &ulabel, f, fg);
+            if actionable {
+                resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            }
+            if resp.clicked() {
+                self.start_update();
+            }
+            pill_right = pill.left() - 8.0;
+        }
+
         if !self.welcome_visible() {
-            let w = (r.width() * 0.42).clamp(280.0, 620.0);
+            // URL 输入框让位给药丸：右侧边界不越过 pill_right。
+            let w = (r.width() * 0.42).clamp(280.0, 620.0).min(((pill_right - r.center().x) * 2.0).max(160.0));
             let cb = Rect::from_center_size(r.center(), vec2(w, 24.0));
             let id = Id::new("url");
             let focus = ctx.memory(|m| m.has_focus(id));
@@ -3571,54 +3606,10 @@ impl App {
             }
             lx = lr.right() + 18.0;
         }
-        // 右侧统计先画，拿到左边界给更新标签做宽度上限——长译文（如英文
-        // Installed 状态）不再与统计文本重叠，超出部分截断为省略号。
+        // 右侧统计右对齐单独绘制。
         let done = self.views.iter().filter(|v| v.status == Status::Completed);
         let (n, total) = done.fold((0usize, 0u64), |(n, t), v| (n + 1, t + v.size.unwrap_or(0)));
-        let stats_r = pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, trf("已完成 {} 个下载，共 {}", &[&n, &bytes(total)]), font(12.0), p.weak);
-        let umax = (stats_r.left() - lx - 12.0).max(8.0);
-        // 更新入口：单个标签即状态机——文案/颜色/可交互性随 stage 变化，
-        // 文案切换时 90ms 提亮落位，不再向后堆叠状态文本。
-        let stage = self.update.lock().clone();
-        let (ukey, ulabel, ucol, live, utip): (u8, String, Color32, bool, Option<String>) = match &stage {
-            update::Stage::Idle => (0, tr("检查更新").into(), p.accent, true, None),
-            update::Stage::Checking => (1, tr("正在检查…").into(), p.weak, false, None),
-            update::Stage::UpToDate => (2, tr("已是最新").into(), p.weak, true, None),
-            update::Stage::Found(tag, _) => (3, trf("发现新版本 {}", &[tag]), p.accent, true, None),
-            update::Stage::Downloading(pct) => (4, trf("正在下载… {}%", &[pct]), p.weak, false, None),
-            update::Stage::Installing => (5, tr("正在安装…").into(), p.weak, false, None),
-            update::Stage::Installed => (6, tr("已安装，点击重启完成更新").into(), p.accent, true, None),
-            update::Stage::Failed(e) => (7, tr("更新失败").into(), p.red, true, Some(e.clone())),
-        };
-        const UFADE: Duration = Duration::from_millis(90);
-        // 直接换字、新文案从微暗状态提亮落位：画面不会变暗（不闪），
-        // 也没有双字重叠（不糊）。只在阶段变化时触发；阶段内文案变化
-        // （如下载百分比）即时刷新，否则每个百分点都会重启动画。
-        if ukey != self.update_label_key {
-            self.update_label_prev = std::mem::replace(&mut self.update_label, ulabel.clone());
-            self.update_label_at = Instant::now();
-            self.update_label_key = ukey;
-        }
-        let ft = self.update_label_at.elapsed().as_secs_f32() / UFADE.as_secs_f32();
-        if ft < 1.0 {
-            ui.ctx().request_repaint();
-        }
-        let ualpha = if ft >= 1.0 { 1.0 } else { 1.0 - 0.35 * (1.0 - ft) * (1.0 - ft) };
-        let lr = text_line(&pt, pos2(lx, y), Align2::LEFT_CENTER, &ulabel, font(12.5), ucol.linear_multiply(ualpha), umax);
-        if live {
-            let mut resp = ui.interact(lr.expand(3.0), Id::new("about_update"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-            if let Some(t) = &utip {
-                resp = resp.on_hover_text(t);
-            } else if lr.width() >= umax - 1.0 {
-                resp = resp.on_hover_text(&ulabel);
-            }
-            if resp.hovered() {
-                pt.hline(lr.x_range(), lr.bottom() + 1.0, Stroke::new(1.0, p.accent.gamma_multiply(0.6)));
-            }
-            if resp.clicked() {
-                self.start_update();
-            }
-        }
+        pt.text(pos2(r.right() - 20.0, y), Align2::RIGHT_CENTER, trf("已完成 {} 个下载，共 {}", &[&n, &bytes(total)]), font(12.0), p.weak);
     }
 
     fn settings_page(&mut self, ui: &mut Ui, p: &Pal) {
@@ -4313,7 +4304,9 @@ impl eframe::App for App {
         }
         #[cfg(not(target_os = "linux"))]
         self.ui_main(ui);
-        let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued)) || self.engine.is_detecting();
+        let busy = self.views.iter().any(|v| matches!(v.status, Status::Running | Status::Queued))
+            || self.engine.is_detecting()
+            || matches!(*self.update.lock(), update::Stage::Checking | update::Stage::Downloading(_) | update::Stage::Installing);
         ctx.request_repaint_after(Duration::from_millis(if busy { 250 } else { 1000 }));
     }
 
