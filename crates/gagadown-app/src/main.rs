@@ -9,9 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gagadown_core::config::{ProxyMode, Settings};
 use gagadown_core::lang::{self, LangPref};
 use gagadown_core::engine::{CacheKind, CacheReport, Engine, PopupEvent};
-use gagadown_core::task::{now_secs, AddRequest, DeletedRecord, Phase, RemoveMode, Status, TaskView};
-#[cfg(debug_assertions)]
-use gagadown_core::task::SegView;
+use gagadown_core::task::{now_secs, AddRequest, DeletedRecord, Phase, RemoveMode, SegView, Status, TaskView};
 use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::Arc;
@@ -71,10 +69,15 @@ fn show_main_window(ctx: &egui::Context) {
     }
 }
 
-#[cfg(debug_assertions)]
-const URL_INPUT_HINT: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
-#[cfg(not(debug_assertions))]
 const URL_INPUT_HINT: &str = "粘贴下载链接或搜索";
+const URL_INPUT_HINT_DEV: &str = "粘贴下载链接（Dev 可输入任意文本预览）";
+
+/// `GAGADOWN_DEV=1` 开 Dev Mode：更新提示走本地 mock 循环、URL 输入任意文本
+/// 生成模拟下载预览。release 构建同样生效，便于在成品包里验证 UI。
+pub(crate) fn dev_mode() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("GAGADOWN_DEV").is_some_and(|v| v == "1"))
+}
 
 /// Material's standard emphasized ease-in-out curve: cubic-bezier(0.4, 0, 0.2, 1).
 fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
@@ -304,7 +307,6 @@ enum Sec {
     Done,
 }
 
-#[cfg(debug_assertions)]
 struct MockDownloadPreview {
     id: Uuid,
     label: String,
@@ -314,7 +316,6 @@ struct MockDownloadPreview {
     created_at: u64,
 }
 
-#[cfg(debug_assertions)]
 impl MockDownloadPreview {
     const DURATION: f32 = 8.0;
     const SIZE: u64 = 64 * 1024 * 1024;
@@ -388,9 +389,10 @@ struct App {
     nav_indicator: NavIndicator,
     input: String,
     views: Vec<TaskView>,
-    #[cfg(debug_assertions)]
     mock_preview: Option<MockDownloadPreview>,
     deleted: Vec<DeletedRecord>,
+    /// 更新药丸按最宽文案定宽；记录 Found 的 tag 供 Found 之后的状态继续量同一串。
+    update_tag: Option<String>,
     welcome_transition_pending: bool,
     last_refresh: Option<Instant>,
     selected: Option<Uuid>,
@@ -1198,7 +1200,10 @@ impl Drop for UiTraceLine {
 
 /// Writes `crash.log` on panic and `freeze.log` when the UI thread is stuck in one stage.
 fn install_diagnostics(dir: std::path::PathBuf) {
-    if std::env::var_os("GAGADOWN_UI_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")) {
+    // Dev Mode 默认开全量 UI 追踪并同时打到 stderr；GAGADOWN_UI_TRACE=1
+    // 可单独只开文件日志（适合让普通用户抓一份不带 mock 行为的真实现场）。
+    let dev = dev_mode();
+    if dev || std::env::var_os("GAGADOWN_UI_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")) {
         use tracing_subscriber::{filter::Targets, prelude::*};
 
         let log_path = dir.join("ui-debug.log");
@@ -1263,13 +1268,33 @@ fn install_diagnostics(dir: std::path::PathBuf) {
                 Err(err) => eprintln!("GaGaDown: cannot start UI diagnostic writer: {err}"),
                 Ok(_) => {
                     let make_writer = UiTraceMakeWriter { tx, dropped };
-                    let trace = tracing_subscriber::fmt::layer()
+                    // 文件层收全量：UI 追踪需要逐帧完整时间线做停顿诊断。
+                    let mut file_targets = Targets::new().with_target("gagadown_ui", tracing::Level::TRACE);
+                    if dev {
+                        file_targets = file_targets
+                            .with_target("gagadown_app", tracing::Level::DEBUG)
+                            .with_target("gagadown_core", tracing::Level::DEBUG);
+                    }
+                    let file_layer = tracing_subscriber::fmt::layer()
                         .with_timer(tracing_subscriber::fmt::time::uptime())
                         .with_ansi(false)
-                        .with_writer(make_writer);
+                        .with_writer(make_writer)
+                        .with_filter(file_targets);
+                    // dev 的 stderr 层收敛到 INFO+：逐帧事件只进文件不进终端。
+                    let stderr_layer = dev.then(|| {
+                        tracing_subscriber::fmt::layer()
+                            .with_timer(tracing_subscriber::fmt::time::uptime())
+                            .with_writer(std::io::stderr)
+                            .with_filter(
+                                Targets::new()
+                                    .with_target("gagadown_ui", tracing::Level::INFO)
+                                    .with_target("gagadown_app", tracing::Level::DEBUG)
+                                    .with_target("gagadown_core", tracing::Level::DEBUG),
+                            )
+                    });
                     let result = tracing_subscriber::registry()
-                        .with(trace)
-                        .with(Targets::new().with_target("gagadown_ui", tracing::Level::TRACE))
+                        .with(file_layer)
+                        .with(stderr_layer)
                         .try_init();
                     match result {
                         Ok(()) => tracing::info!(target: "gagadown_ui", log_path = %log_path.display(), "UI trace enabled"),
@@ -2185,9 +2210,9 @@ impl App {
             nav_indicator: NavIndicator::new(),
             input: String::new(),
             views: Vec::new(),
-            #[cfg(debug_assertions)]
             mock_preview: None,
             deleted: Vec::new(),
+            update_tag: None,
             welcome_transition_pending: false,
             last_refresh: None,
             selected: None,
@@ -2277,7 +2302,6 @@ impl App {
         }
         self.last_refresh = Some(Instant::now());
         self.views = self.engine.views(400);
-        #[cfg(debug_assertions)]
         if let Some(preview) = &self.mock_preview {
             self.views.push(preview.view(Instant::now()));
         }
@@ -2359,8 +2383,7 @@ impl App {
             }
         }
         if added == 0 && !text.contains("://") {
-            #[cfg(debug_assertions)]
-            if !text.trim().is_empty() {
+            if dev_mode() && !text.trim().is_empty() {
                 let label: String = text.trim().chars().take(24).collect();
                 let preview = MockDownloadPreview {
                     id: Uuid::new_v4(),
@@ -2430,7 +2453,6 @@ impl App {
 
     fn act(&mut self, ctx: &egui::Context, v: &TaskView, a: Act) {
         let id = v.id;
-        #[cfg(debug_assertions)]
         if self.mock_preview.as_ref().is_some_and(|preview| preview.id == id) {
             match a {
                 Act::Remove => self.removing = Some(id),
@@ -2520,9 +2542,9 @@ impl App {
             ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
         }
 
-        // 更新提示药丸：金刚键左侧。无更新时完全不渲染；发现新版与待重启
-        // 用 accent 实心药丸（可点），检查中/下载/安装为弱色文本态，
-        // 失败为红色可点重试。
+        // 更新提示药丸：金刚键左侧，无更新时不渲染。镂空胶囊样式：
+        // 下载时 accent 沿进度从左向右填充、文字随填充反色（充电 UI 风格）；
+        // 发现新版/待重启为 accent 系可点，检查/安装为弱色态，失败红色可点重试。
         let stage = self.update.lock().clone();
         let ulabel: Option<String> = match &stage {
             update::Stage::Idle | update::Stage::UpToDate => None,
@@ -2537,21 +2559,68 @@ impl App {
         if let Some(ulabel) = ulabel {
             let f = font(11.5);
             let actionable = matches!(stage, update::Stage::Found(..) | update::Stage::Installed | update::Stage::Failed(_));
-            let tw = ui.painter().layout_no_wrap(ulabel.clone(), f.clone(), p.text).size().x;
+            if let update::Stage::Found(tag, _) = &stage {
+                self.update_tag = Some(tag.clone());
+            }
+            // 定宽：按所有候选文案的最宽者。下载百分比按三位数（100%）量，
+            // "发现新版本"用见过/占位的 tag。
+            let tag = self.update_tag.as_deref().unwrap_or("v0.0.0");
+            let candidates = [
+                tr("正在检查…").to_string(),
+                trf("发现新版本 {}", &[&tag]),
+                trf("正在下载… {}%", &[&"100"]),
+                tr("正在安装…").to_string(),
+                tr("重启完成更新").to_string(),
+                tr("更新失败").to_string(),
+            ];
+            let tw = candidates
+                .iter()
+                .map(|s| ui.painter().layout_no_wrap(s.clone(), f.clone(), p.text).size().x)
+                .fold(0.0, f32::max);
             let pill = Rect::from_min_size(pos2(pill_right - tw - 20.0, r.center().y - 10.0), vec2(tw + 20.0, 20.0));
             let mut resp = ui.interact(pill, Id::new("update_pill"), Sense::click());
-            let (bg, fg) = if matches!(stage, update::Stage::Found(..) | update::Stage::Installed) {
-                (p.accent, Color32::WHITE)
-            } else if matches!(stage, update::Stage::Failed(_)) {
-                (p.input, p.red)
-            } else {
-                (p.input, p.weak)
+            let rr = CornerRadius::same(10);
+            // 填充三态：无 = 纯镂空；Tint = 整宽淡染色（hover 提示）；
+            // Progress = 按进度左→右实心填充，文字随填充反色（充电 UI 风格）。
+            enum Fill {
+                None,
+                Tint(Color32),
+                Progress(f32, Color32),
+            }
+            let (outline, fg, fill) = match &stage {
+                update::Stage::Checking => (p.line, p.weak, Fill::None),
+                update::Stage::Found(..) => (p.accent, p.accent, if resp.hovered() { Fill::Tint(p.accent.linear_multiply(0.18)) } else { Fill::None }),
+                update::Stage::Downloading(pct) => (p.accent, p.accent, Fill::Progress(*pct as f32 / 100.0, p.accent)),
+                update::Stage::Installing => (p.line, p.weak, Fill::Tint(p.hover)),
+                update::Stage::Installed => (p.accent, Color32::WHITE, Fill::Progress(1.0, p.accent)),
+                update::Stage::Failed(_) => (p.red, p.red, if resp.hovered() { Fill::Tint(p.red.linear_multiply(0.18)) } else { Fill::None }),
+                update::Stage::Idle | update::Stage::UpToDate => unreachable!(),
             };
-            let bg = if resp.hovered() && actionable { bg.gamma_multiply(1.2) } else { bg };
-            ui.painter().rect(pill, CornerRadius::same(10), bg, Stroke::NONE, StrokeKind::Inside);
-            ui.painter().text(pill.center(), Align2::CENTER_CENTER, &ulabel, f, fg);
+            // 镂空底 + 描边
+            ui.painter().rect(pill, rr, p.input.gamma_multiply(0.45), Stroke::new(1.0, outline), StrokeKind::Inside);
+            match fill {
+                Fill::Tint(color) => {
+                    ui.painter().rect(pill, rr, color, Stroke::NONE, StrokeKind::Inside);
+                    ui.painter().text(pill.center(), Align2::CENTER_CENTER, &ulabel, f.clone(), fg);
+                }
+                Fill::Progress(frac, color) => {
+                    // 把完整圆角药丸按填充宽度裁切：保证左缘圆角、右缘被进度边界截断。
+                    let cut = Rect::from_min_max(pill.min, pos2(pill.left() + pill.width() * frac.clamp(0.0, 1.0), pill.max.y));
+                    ui.painter().with_clip_rect(cut).rect(pill, rr, color, Stroke::NONE, StrokeKind::Inside);
+                    // 双段反色文字：被填充覆盖的部分用白，其余用状态色。
+                    ui.painter().with_clip_rect(cut).text(pill.center(), Align2::CENTER_CENTER, &ulabel, f.clone(), Color32::WHITE);
+                    let rest = Rect::from_min_max(pos2(cut.max.x, pill.min.y), pill.max);
+                    ui.painter().with_clip_rect(rest).text(pill.center(), Align2::CENTER_CENTER, &ulabel, f.clone(), fg);
+                }
+                Fill::None => {
+                    ui.painter().text(pill.center(), Align2::CENTER_CENTER, &ulabel, f.clone(), fg);
+                }
+            }
             if actionable {
                 resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            }
+            if let update::Stage::Failed(msg) = &stage {
+                resp = resp.on_hover_text(msg);
             }
             if resp.clicked() {
                 self.start_update();
@@ -2576,7 +2645,7 @@ impl App {
                     .frame(egui::Frame::NONE)
                     .font(font(12.5))
                     .vertical_align(egui::Align::Center)
-                    .hint_text(RichText::new(tr(URL_INPUT_HINT)).color(p.weak)),
+                    .hint_text(RichText::new(tr(if dev_mode() { URL_INPUT_HINT_DEV } else { URL_INPUT_HINT })).color(p.weak)),
             );
             let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let clicked = icon_at(ui, go, Id::new("go"), ic::ARROW_DOWN, tr("下载"), p);
@@ -2759,15 +2828,7 @@ impl App {
     }
 
     fn is_mock_view(&self, id: Uuid) -> bool {
-        #[cfg(debug_assertions)]
-        {
-            return self.mock_preview.as_ref().is_some_and(|preview| preview.id == id);
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = id;
-            false
-        }
+        self.mock_preview.as_ref().is_some_and(|preview| preview.id == id)
     }
 
     fn welcome(&mut self, ui: &mut Ui, p: &Pal) {
@@ -2891,17 +2952,24 @@ impl App {
                 self.rt.spawn(async move { update::check(&st).await });
             }
             update::Stage::Found(tag, url) => {
-                if update::can_self_install() {
+                if url.starts_with("mock://") || update::can_self_install() {
                     let st = self.update.clone();
-                    let dir = self.engine.data_dir().to_path_buf();
-                    self.rt.spawn(async move { update::apply(&st, tag, url, dir).await });
+                    let e = self.engine.clone();
+                    self.rt.spawn(async move { update::apply(&st, &e, tag, url).await });
                 } else {
                     open_path(Path::new(&url));
                     *self.update.lock() = update::Stage::Idle;
                 }
             }
             #[cfg(target_os = "linux")]
-            update::Stage::Installed => update::restart(),
+            update::Stage::Installed => {
+                if update::mock_active() {
+                    let st = self.update.clone();
+                    self.rt.spawn(async move { update::check(&st).await });
+                } else {
+                    update::restart();
+                }
+            }
             _ => {}
         }
     }
@@ -2951,10 +3019,7 @@ impl App {
                 }
                 for id in ids {
                     if self.is_mock_view(id) {
-                        #[cfg(debug_assertions)]
-                        {
-                            self.mock_preview = None;
-                        }
+                        self.mock_preview = None;
                         self.views.retain(|view| view.id != id);
                     } else {
                         let e = self.engine.clone();
@@ -3898,10 +3963,7 @@ impl App {
                     self.welcome_transition_pending = true;
                 }
                 if mock_item {
-                    #[cfg(debug_assertions)]
-                    {
-                        self.mock_preview = None;
-                    }
+                    self.mock_preview = None;
                     self.views.retain(|view| view.id != id);
                 } else {
                     let e = self.engine.clone();

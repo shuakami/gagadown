@@ -276,6 +276,8 @@ fn en(zh: &'static str) -> &'static str {
         "已安装，点击重启完成更新" => "Installed — click to restart and finish",
         "重启完成更新" => "Restart to update",
         "更新失败" => "Update failed",
+        "更新下载已取消" => "Update download cancelled",
+        "更新文件缺失" => "Update file missing",
         _ => zh,
     }
 }
