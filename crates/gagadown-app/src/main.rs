@@ -391,6 +391,8 @@ struct App {
     views: Vec<TaskView>,
     mock_preview: Option<MockDownloadPreview>,
     deleted: Vec<DeletedRecord>,
+    /// 更新药丸按最宽文案定宽；记录 Found 的 tag 供 Found 之后的状态继续量同一串。
+    update_tag: Option<String>,
     welcome_transition_pending: bool,
     last_refresh: Option<Instant>,
     selected: Option<Uuid>,
@@ -2196,6 +2198,7 @@ impl App {
             views: Vec::new(),
             mock_preview: None,
             deleted: Vec::new(),
+            update_tag: None,
             welcome_transition_pending: false,
             last_refresh: None,
             selected: None,
@@ -2542,7 +2545,24 @@ impl App {
         if let Some(ulabel) = ulabel {
             let f = font(11.5);
             let actionable = matches!(stage, update::Stage::Found(..) | update::Stage::Installed | update::Stage::Failed(_));
-            let tw = ui.painter().layout_no_wrap(ulabel.clone(), f.clone(), p.text).size().x;
+            if let update::Stage::Found(tag, _) = &stage {
+                self.update_tag = Some(tag.clone());
+            }
+            // 定宽：按所有候选文案的最宽者。下载百分比按三位数（100%）量，
+            // "发现新版本"用见过/占位的 tag。
+            let tag = self.update_tag.as_deref().unwrap_or("v0.0.0");
+            let candidates = [
+                tr("正在检查…").to_string(),
+                trf("发现新版本 {}", &[&tag]),
+                trf("正在下载… {}%", &[&"100"]),
+                tr("正在安装…").to_string(),
+                tr("重启完成更新").to_string(),
+                tr("更新失败").to_string(),
+            ];
+            let tw = candidates
+                .iter()
+                .map(|s| ui.painter().layout_no_wrap(s.clone(), f.clone(), p.text).size().x)
+                .fold(0.0, f32::max);
             let pill = Rect::from_min_size(pos2(pill_right - tw - 20.0, r.center().y - 10.0), vec2(tw + 20.0, 20.0));
             let mut resp = ui.interact(pill, Id::new("update_pill"), Sense::click());
             let rr = CornerRadius::same(10);
