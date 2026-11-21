@@ -278,6 +278,14 @@ fn en(zh: &'static str) -> &'static str {
         "更新失败" => "Update failed",
         "更新下载已取消" => "Update download cancelled",
         "更新文件缺失" => "Update file missing",
+        "开发者模式已启用" => "Developer mode enabled",
+        "检测到 GAGADOWN_DEV=1，本实例显示的内容可能为模拟数据：" => "GAGADOWN_DEV=1 detected — content shown in this session may be simulated:",
+        "· 更新提示会循环演示假流程" => "· The update prompt loops a fake flow",
+        "· 输入任意文本会生成假下载任务" => "· Any input text spawns a fake download task",
+        "· 详细日志写入 ui-debug.log 并输出到终端" => "· Verbose logs go to ui-debug.log and the terminal",
+        "如果你不清楚这个模式的用途，请以普通模式运行。" => "If you did not enable this on purpose, run in normal mode.",
+        "以普通模式运行" => "Run in normal mode",
+        "继续开发者模式" => "Continue in dev mode",
         _ => zh,
     }
 }

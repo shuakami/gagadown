@@ -41,7 +41,7 @@ pub fn new_state() -> State {
 static MOCK_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 pub fn mock_active() -> bool {
-    MOCK_ACTIVE.load(Ordering::Relaxed)
+    MOCK_ACTIVE.load(Ordering::Relaxed) && crate::dev_mode()
 }
 
 fn client() -> reqwest::Client {

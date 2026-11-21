@@ -400,6 +400,8 @@ struct App {
     err_report: Option<Uuid>,
     rm_fade: Fade,
     er_fade: Fade,
+    dev_warn: bool,
+    dev_fade: Fade,
     browsers: Vec<Browser>,
     ext_guide: Option<ExtGuide>,
     ext_tab: usize,
@@ -2220,6 +2222,8 @@ impl App {
             err_report: None,
             rm_fade: Fade::default(),
             er_fade: Fade::default(),
+            dev_warn: dev_mode(),
+            dev_fade: Fade::default(),
             browsers: browsers(),
             ext_guide: None,
             ext_tab: 0,
@@ -3845,6 +3849,68 @@ impl App {
         ctx.request_repaint_after(Duration::from_millis(200));
     }
 
+    /// Dev Mode 启动警告：防止用户误开——列出本会话启用的模拟行为，
+    /// 可选继续开发者模式，或退回普通模式（关闭全部 dev 行为并做真实更新检查）。
+    fn dev_warn_modal(&mut self, ctx: &egui::Context, p: &Pal) {
+        if !self.dev_warn {
+            return;
+        }
+        let Some(a) = self.dev_fade.step(ctx) else {
+            self.dev_warn = false;
+            return;
+        };
+        let closing = self.dev_fade.closing;
+        let mut stay_dev = false;
+        let mut go_normal = false;
+        let fill = if p.dark { rgb(37, 37, 38) } else { rgb(255, 255, 255) };
+        let frame = egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(20)).stroke(Stroke::new(1.0, p.line));
+        let mid = Id::new("dev_warn");
+        let m = egui::Modal::new(mid).area(egui::Modal::default_area(mid).fade_in(false)).backdrop_color(Color32::from_black_alpha((100.0 * a) as u8)).frame(frame).show(ctx, |ui| {
+            ui.set_opacity(a);
+            ui.set_width(420.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(RichText::new(tr("开发者模式已启用")).font(bold(15.0)).color(p.text));
+            ui.add_space(8.0);
+            ui.add(egui::Label::new(RichText::new(tr("检测到 GAGADOWN_DEV=1，本实例显示的内容可能为模拟数据：")).size(13.0).color(p.text)).wrap());
+            ui.add_space(4.0);
+            for line in [tr("· 更新提示会循环演示假流程"), tr("· 输入任意文本会生成假下载任务"), tr("· 详细日志写入 ui-debug.log 并输出到终端")] {
+                ui.label(RichText::new(line).size(12.5).color(p.weak));
+            }
+            ui.add_space(8.0);
+            ui.add(egui::Label::new(RichText::new(tr("如果你不清楚这个模式的用途，请以普通模式运行。")).size(12.5).color(p.red)).wrap());
+            ui.add_space(16.0);
+            let (row, _) = ui.allocate_exact_size(vec2(420.0, 30.0), Sense::hover());
+            let bf = font(13.0);
+            let dw = ui.painter().layout_no_wrap(tr("继续开发者模式").into(), bf.clone(), p.text).size().x + 28.0;
+            let nw = ui.painter().layout_no_wrap(tr("以普通模式运行").into(), bf.clone(), p.text).size().x + 28.0;
+            let dev = Rect::from_min_size(pos2(row.right() - dw, row.top()), vec2(dw, 30.0));
+            let normal = Rect::from_min_size(pos2(dev.left() - 8.0 - nw, row.top()), vec2(nw, 30.0));
+            let dr = ui.interact(dev, Id::new("dev-stay"), Sense::click());
+            ui.painter().rect_filled(dev, CornerRadius::same(6), p.text.gamma_multiply(if dr.hovered() { 0.1 } else { 0.06 }));
+            ui.painter().text(dev.center(), Align2::CENTER_CENTER, tr("继续开发者模式"), bf.clone(), p.text);
+            let nr = ui.interact(normal, Id::new("dev-normal"), Sense::click());
+            ui.painter().rect_filled(normal, CornerRadius::same(6), if nr.hovered() { blend(p.accent, Color32::BLACK, 0.88) } else { p.accent });
+            ui.painter().text(normal.center(), Align2::CENTER_CENTER, tr("以普通模式运行"), bf.clone(), Color32::WHITE);
+            stay_dev = dr.clicked();
+            go_normal = nr.clicked();
+        });
+        if !closing && go_normal {
+            // 剥掉 GAGADOWN_DEV 重启：用户不用自己清理环境变量。
+            // --restart-after 让新进程等本进程退出、释放单实例锁后再起。
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = std::process::Command::new(exe)
+                    .arg("--restart-after")
+                    .arg(std::process::id().to_string())
+                    .env_remove("GAGADOWN_DEV")
+                    .spawn();
+            }
+            std::process::exit(0);
+        }
+        if !closing && (stay_dev || m.should_close()) {
+            self.dev_fade.close(ctx);
+        }
+    }
+
     fn error_modal(&mut self, ctx: &egui::Context, p: &Pal) {
         let Some(id) = self.err_report else { return };
         let found = self.views.iter().find(|v| v.id == id).and_then(|v| v.error.as_ref().map(|e| (v.filename.clone(), e.summary(), error_report(v, e))));
@@ -4485,6 +4551,7 @@ impl App {
                 painter.with_clip_rect(clip).add(clipped.shape);
             }
         }
+        self.dev_warn_modal(&ctx, &p);
         self.remove_modal(&ctx, &p);
         self.error_modal(&ctx, &p);
         self.show_toasts(&ctx, &p);
