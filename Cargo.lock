@@ -1599,7 +1599,6 @@ dependencies = [
  "eframe",
  "egui-phosphor",
  "embed-resource",
- "futures-util",
  "gagadown-core",
  "ksni",
  "parking_lot",
