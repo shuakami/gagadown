@@ -218,14 +218,6 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Stable file names
-        run: |
-          cd dist
-          cp "GagaDown-Setup-$V.exe" GagaDown-windows-setup.exe
-          cp "GagaDown-$V-linux-x86_64.tar.gz" GagaDown-linux-x86_64.tar.gz
-          cp "GagaDown-$V-linux-x86_64.flatpak" GagaDown-linux-x86_64.flatpak
-          ls -la
-
       - name: Write release notes
         run: |
           TAG="v$V"
@@ -280,7 +272,4 @@ jobs:
             dist/GagaDown-${{ env.V }}-linux-x86_64.tar.gz
             dist/GagaDown-${{ env.V }}-linux-x86_64.flatpak
             dist/GagaDown-${{ env.V }}-src.zip
-            dist/GagaDown-windows-setup.exe
-            dist/GagaDown-linux-x86_64.tar.gz
-            dist/GagaDown-linux-x86_64.flatpak
             dist/cargo-sources.json
