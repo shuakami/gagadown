@@ -74,16 +74,9 @@ const URL_INPUT_HINT_DEV: &str = "粘贴下载链接（Dev 可输入任意文本
 
 /// `GAGADOWN_DEV=1` 开 Dev Mode：更新提示走本地 mock 循环、URL 输入任意文本
 /// 生成模拟下载预览。release 构建同样生效，便于在成品包里验证 UI。
-/// 启动警告里选"以普通模式运行"可本会话关闭（DEV_OFF）。
-static DEV_ENV: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-static DEV_OFF: AtomicBool = AtomicBool::new(false);
-
 pub(crate) fn dev_mode() -> bool {
-    *DEV_ENV.get_or_init(|| std::env::var_os("GAGADOWN_DEV").is_some_and(|v| v == "1")) && !DEV_OFF.load(Ordering::Relaxed)
-}
-
-fn disable_dev_mode() {
-    DEV_OFF.store(true, Ordering::Relaxed);
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("GAGADOWN_DEV").is_some_and(|v| v == "1"))
 }
 
 /// Material's standard emphasized ease-in-out curve: cubic-bezier(0.4, 0, 0.2, 1).
@@ -3887,26 +3880,33 @@ impl App {
             ui.add(egui::Label::new(RichText::new(tr("如果你不清楚这个模式的用途，请以普通模式运行。")).size(12.5).color(p.red)).wrap());
             ui.add_space(16.0);
             let (row, _) = ui.allocate_exact_size(vec2(420.0, 30.0), Sense::hover());
-            let dev = Rect::from_min_size(pos2(row.right() - 148.0, row.top()), vec2(148.0, 30.0));
-            let normal = Rect::from_min_size(pos2(dev.left() - 128.0, row.top()), vec2(120.0, 30.0));
+            let bf = font(13.0);
+            let dw = ui.painter().layout_no_wrap(tr("继续开发者模式").into(), bf.clone(), p.text).size().x + 28.0;
+            let nw = ui.painter().layout_no_wrap(tr("以普通模式运行").into(), bf.clone(), p.text).size().x + 28.0;
+            let dev = Rect::from_min_size(pos2(row.right() - dw, row.top()), vec2(dw, 30.0));
+            let normal = Rect::from_min_size(pos2(dev.left() - 8.0 - nw, row.top()), vec2(nw, 30.0));
             let dr = ui.interact(dev, Id::new("dev-stay"), Sense::click());
             ui.painter().rect_filled(dev, CornerRadius::same(6), p.text.gamma_multiply(if dr.hovered() { 0.1 } else { 0.06 }));
-            ui.painter().text(dev.center(), Align2::CENTER_CENTER, tr("继续开发者模式"), font(13.0), p.text);
+            ui.painter().text(dev.center(), Align2::CENTER_CENTER, tr("继续开发者模式"), bf.clone(), p.text);
             let nr = ui.interact(normal, Id::new("dev-normal"), Sense::click());
             ui.painter().rect_filled(normal, CornerRadius::same(6), if nr.hovered() { blend(p.accent, Color32::BLACK, 0.88) } else { p.accent });
-            ui.painter().text(normal.center(), Align2::CENTER_CENTER, tr("以普通模式运行"), font(13.0), Color32::WHITE);
+            ui.painter().text(normal.center(), Align2::CENTER_CENTER, tr("以普通模式运行"), bf.clone(), Color32::WHITE);
             stay_dev = dr.clicked();
             go_normal = nr.clicked();
         });
-        if !closing && (stay_dev || go_normal || m.should_close()) {
-            if go_normal {
-                disable_dev_mode();
-                self.mock_preview = None;
-                *self.update.lock() = update::Stage::Idle;
-                let st = self.update.clone();
-                self.rt.spawn(async move { update::check(&st).await });
-                self.last_refresh = None;
+        if !closing && go_normal {
+            // 剥掉 GAGADOWN_DEV 重启：用户不用自己清理环境变量。
+            // --restart-after 让新进程等本进程退出、释放单实例锁后再起。
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = std::process::Command::new(exe)
+                    .arg("--restart-after")
+                    .arg(std::process::id().to_string())
+                    .env_remove("GAGADOWN_DEV")
+                    .spawn();
             }
+            std::process::exit(0);
+        }
+        if !closing && (stay_dev || m.should_close()) {
             self.dev_fade.close(ctx);
         }
     }
