@@ -1239,9 +1239,6 @@ fn install_diagnostics(dir: std::path::PathBuf) {
                                 if out.write_all(&line).is_err() {
                                     break;
                                 }
-                                if dev {
-                                    let _ = std::io::stderr().write_all(&line);
-                                }
                                 pending += 1;
                                 if pending >= 64 {
                                     if out.flush().is_err() {
@@ -1271,17 +1268,34 @@ fn install_diagnostics(dir: std::path::PathBuf) {
                 Err(err) => eprintln!("GaGaDown: cannot start UI diagnostic writer: {err}"),
                 Ok(_) => {
                     let make_writer = UiTraceMakeWriter { tx, dropped };
-                    let trace = tracing_subscriber::fmt::layer()
-                        .with_timer(tracing_subscriber::fmt::time::uptime())
-                        .with_ansi(false)
-                        .with_writer(make_writer);
-                    let mut targets = Targets::new().with_target("gagadown_ui", tracing::Level::TRACE);
+                    // 文件层收全量：UI 追踪需要逐帧完整时间线做停顿诊断。
+                    let mut file_targets = Targets::new().with_target("gagadown_ui", tracing::Level::TRACE);
                     if dev {
-                        targets = targets
+                        file_targets = file_targets
                             .with_target("gagadown_app", tracing::Level::DEBUG)
                             .with_target("gagadown_core", tracing::Level::DEBUG);
                     }
-                    let result = tracing_subscriber::registry().with(trace).with(targets).try_init();
+                    let file_layer = tracing_subscriber::fmt::layer()
+                        .with_timer(tracing_subscriber::fmt::time::uptime())
+                        .with_ansi(false)
+                        .with_writer(make_writer)
+                        .with_filter(file_targets);
+                    // dev 的 stderr 层收敛到 INFO+：逐帧事件只进文件不进终端。
+                    let stderr_layer = dev.then(|| {
+                        tracing_subscriber::fmt::layer()
+                            .with_timer(tracing_subscriber::fmt::time::uptime())
+                            .with_writer(std::io::stderr)
+                            .with_filter(
+                                Targets::new()
+                                    .with_target("gagadown_ui", tracing::Level::INFO)
+                                    .with_target("gagadown_app", tracing::Level::DEBUG)
+                                    .with_target("gagadown_core", tracing::Level::DEBUG),
+                            )
+                    });
+                    let result = tracing_subscriber::registry()
+                        .with(file_layer)
+                        .with(stderr_layer)
+                        .try_init();
                     match result {
                         Ok(()) => tracing::info!(target: "gagadown_ui", log_path = %log_path.display(), "UI trace enabled"),
                         Err(err) => eprintln!("GaGaDown: failed to initialize UI trace: {err}"),
