@@ -183,6 +183,14 @@ jobs:
           key: flatpak-${{ runner.os }}-${{ hashFiles('packaging/flatpak/**', 'Cargo.lock') }}
           restore-keys: flatpak-${{ runner.os }}-
 
+      # The platform/SDK install lives in the user flatpak dir, outside
+      # .flatpak-builder; cache it separately so it survives Cargo.lock bumps.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/flatpak
+          key: flatpak-runtime-${{ runner.os }}-${{ hashFiles('packaging/flatpak/io.github.shuakami.GaGaDown.yml') }}
+          restore-keys: flatpak-runtime-${{ runner.os }}-
+
       - name: Build bundle
         run: |
           flatpak-builder --user --install-deps-from=flathub --force-clean --disable-rofiles-fuse --repo=repo build-dir packaging/flatpak/io.github.shuakami.GaGaDown.yml

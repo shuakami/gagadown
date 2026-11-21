@@ -25,7 +25,7 @@ modules:
         CARGO_HOME: /run/build/gagadown/cargo
         AWS_LC_SYS_CMAKE_BUILDER: '1'
     build-commands:
-      - cargo build --release --offline -j 2 -p gagadown-app
+      - cargo build --release --offline -j $(nproc) -p gagadown-app
       - install -D target/release/GagaDown /app/bin/GagaDown
       - install -D packaging/flatpak/io.github.shuakami.GaGaDown.desktop /app/share/applications/io.github.shuakami.GaGaDown.desktop
       - install -D packaging/flatpak/io.github.shuakami.GaGaDown.metainfo.xml /app/share/metainfo/io.github.shuakami.GaGaDown.metainfo.xml
