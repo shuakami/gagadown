@@ -5,6 +5,7 @@ use crate::engine::{Inner, TaskEntry};
 use crate::error::{DlError, DlResult, ErrorKind};
 use crate::lang::{tr, trf};
 use crate::probe::{parse_content_range, retry_after, sanitize_filename};
+use crate::request::{is_baidu_pcs_host, is_baidu_pcs_url};
 use crate::route::Route;
 use crate::segments::Table;
 use crate::task::{Phase, StopReason};
@@ -381,7 +382,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
         // Baidu PCS answers 403 (31326) to ranges above ~8 MB for non-member clients.
         max_req: [info.final_url.as_str(), rec.spec.url.as_str()]
             .iter()
-            .any(|u| baidu_pcs_host(u))
+            .any(|u| is_baidu_pcs_url(u))
             .then_some(4 << 20),
     });
 
@@ -394,7 +395,7 @@ async fn run_once(inner: &Arc<Inner>, entry: &Arc<TaskEntry>, sh: &Arc<Shared>, 
             cap = cap.min(c.max(1));
         }
         // Baidu PCS blacklists accounts that open many parallel ranges on one file.
-        if host.ends_with("baidupcs.com") || host.ends_with("pcs.baidu.com") {
+        if is_baidu_pcs_host(&host) {
             cap = cap.min(8);
         }
         // Open as many connections as the file can use right away; slow start takes it from there.
@@ -791,13 +792,6 @@ async fn flush(ctx: &Ctx, idx: usize, buf: &mut Vec<u8>, off: &mut u64) -> DlRes
         t.commit(idx, n);
     }
     Ok(())
-}
-
-fn baidu_pcs_host(url: &str) -> bool {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(|h| h.ends_with("baidupcs.com") || h.ends_with("pcs.baidu.com")))
-        .unwrap_or(false)
 }
 
 async fn segment(ctx: &Ctx, idx: usize, wid: u32, buf: &mut Vec<u8>) -> DlResult<()> {

@@ -15,6 +15,40 @@ pub struct RequestSpec {
     pub user_agent: Option<String>,
 }
 
+pub(crate) const BAIDU_PAN_UA: &str = "pan.baidu.com";
+
+fn domain_or_subdomain(host: &str, domain: &str) -> bool {
+    host == domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.'))
+}
+
+fn normalized_host(host: &str) -> String {
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+pub(crate) fn is_baidu_host(host: &str) -> bool {
+    let host = normalized_host(host);
+    domain_or_subdomain(&host, "baidu.com") || domain_or_subdomain(&host, "baidupcs.com")
+}
+
+pub(crate) fn is_baidu_pcs_host(host: &str) -> bool {
+    let host = normalized_host(host);
+    domain_or_subdomain(&host, "pcs.baidu.com") || domain_or_subdomain(&host, "baidupcs.com")
+}
+
+pub(crate) fn is_baidu_download_url(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(is_baidu_host))
+        .unwrap_or(false)
+}
+
+pub(crate) fn is_baidu_pcs_url(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(is_baidu_pcs_host))
+        .unwrap_or(false)
+}
+
 /// Headers we must control ourselves; anything captured from the browser with these names is dropped.
 const MANAGED: &[&str] = &[
     "range",
@@ -63,7 +97,9 @@ impl RequestSpec {
             has_referer |= lk == "referer";
             map.append(name, val);
         }
-        if !has_ua {
+        if is_baidu_download_url(&self.url) {
+            map.insert(reqwest::header::USER_AGENT, HeaderValue::from_static(BAIDU_PAN_UA));
+        } else if !has_ua {
             let ua = self.user_agent.as_deref().filter(|s| !s.is_empty()).unwrap_or(if default_ua.is_empty() {
                 DEFAULT_UA
             } else {
@@ -103,5 +139,69 @@ impl RequestSpec {
             }
         }
         v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ua(spec: &RequestSpec) -> String {
+        spec.header_map(DEFAULT_UA)
+            .get(reqwest::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    #[test]
+    fn baidu_download_hosts_match_exact_domain_boundaries() {
+        for host in [
+            "baidu.com",
+            "pan.baidu.com",
+            "d.pcs.baidu.com",
+            "baidupcs.com",
+            "yq-cm20.baidupcs.com",
+            "D.PCS.BAIDU.COM.",
+        ] {
+            assert!(is_baidu_host(host), "{host}");
+        }
+        for host in ["notbaidu.com", "evilbaidupcs.com", "baidu.com.evil.com", "evil.pcs.baidu.com.evil.com"] {
+            assert!(!is_baidu_host(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn baidu_pcs_hosts_stay_scoped_to_download_endpoints() {
+        for host in ["pcs.baidu.com", "d.pcs.baidu.com", "baidupcs.com", "yq-cm20.baidupcs.com"] {
+            assert!(is_baidu_pcs_host(host), "{host}");
+        }
+        for host in ["baidu.com", "pan.baidu.com", "www.baidu.com", "evilbaidupcs.com"] {
+            assert!(!is_baidu_pcs_host(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn baidu_download_urls_force_pan_user_agent() {
+        for url in [
+            "https://pan.baidu.com/rest/2.0/xpan/file?method=download",
+            "https://d.pcs.baidu.com/file/example",
+            "https://yq-cm20.baidupcs.com/file/example",
+        ] {
+            let mut spec = RequestSpec::new(url);
+            spec.user_agent = Some("custom-agent".into());
+            spec.headers.push(("User-Agent".into(), "browser-agent".into()));
+            assert_eq!(ua(&spec), BAIDU_PAN_UA, "{url}");
+        }
+    }
+
+    #[test]
+    fn other_urls_keep_existing_user_agent_priority() {
+        let mut spec = RequestSpec::new("https://example.com/file.zip");
+        spec.user_agent = Some("task-agent".into());
+        assert_eq!(ua(&spec), "task-agent");
+
+        spec.headers.push(("User-Agent".into(), "captured-agent".into()));
+        assert_eq!(ua(&spec), "captured-agent");
     }
 }

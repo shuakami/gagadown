@@ -137,16 +137,6 @@ async fn add(State(e): State<Engine>, Json(body): Json<BrowserAdd>) -> impl Into
     Json(resp)
 }
 
-/// Baidu PCS answers 403 to browser user agents unless it is the netdisk client.
-const NETDISK_UA: &str = "netdisk;P2SP;3.0.20.63";
-
-fn baidu_pcs(url: &str) -> bool {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(|h| h.ends_with("baidupcs.com") || h.ends_with("pcs.baidu.com")))
-        .unwrap_or(false)
-}
-
 fn unsupported_scheme(url: &str) -> Option<&'static str> {
     let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase()).unwrap_or_default();
     match scheme.as_str() {
@@ -185,23 +175,8 @@ async fn take(e: &Engine, body: BrowserAdd, html_mime: bool) -> Taken {
         return fail("unsupported_scheme", shown, None);
     }
     // The browser holds its download until we answer, so never keep it waiting long.
-    let baidu = baidu_pcs(&spec.url);
-    let attempt = async {
-        if baidu {
-            let nd = RequestSpec { user_agent: Some(NETDISK_UA.into()), ..spec.clone() };
-            if let Ok(p) = e.probe(&nd).await {
-                return Ok((p, true));
-            }
-        }
-        e.probe(&spec).await.map(|p| (p, false))
-    };
-    let probe = match tokio::time::timeout(PROBE_BUDGET, attempt).await {
-        Ok(Ok((p, netdisk))) => {
-            if netdisk {
-                req.user_agent = Some(NETDISK_UA.into());
-            }
-            p
-        }
+    let probe = match tokio::time::timeout(PROBE_BUDGET, e.probe(&spec)).await {
+        Ok(Ok(p)) => p,
         Ok(Err(err)) => {
             // Let the browser keep the download: it owns the session state we could not replay.
             let (reason, shown) = match err.kind {
